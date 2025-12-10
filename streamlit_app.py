@@ -1304,7 +1304,10 @@ def render_sandbox(q_id, title, default_code, editable_title=False):
                         st.dataframe(table, use_container_width=True, hide_index=True)
                         
                         # Download table as high-res image
+                        col_dl1, col_dl2 = st.columns([1, 1])
+                        
                         try:
+                            # 1. Image Download
                             # Create a matplotlib figure for the table
                             fig_table, ax_table = plt.subplots(figsize=(10, len(table) * 0.5 + 1))
                             ax_table.axis('tight')
@@ -1337,15 +1340,41 @@ def render_sandbox(q_id, title, default_code, editable_title=False):
                             buf_table.seek(0)
                             plt.close(fig_table)
                             
-                            st.download_button(
-                                label="📥 Download Table",
-                                data=buf_table,
-                                file_name=f"table_{q_id}_{int(pd.Timestamp.now().timestamp())}.png",
-                                mime="image/png",
-                                key=f"dl_table_{q_id}_{int(pd.Timestamp.now().timestamp())}_{np.random.randint(0,10000)}"
-                            )
+                            with col_dl1:
+                                st.download_button(
+                                    label="📥 Download Image",
+                                    data=buf_table,
+                                    file_name=f"table_{q_id}_{int(pd.Timestamp.now().timestamp())}.png",
+                                    mime="image/png",
+                                    key=f"dl_table_img_{q_id}_{int(pd.Timestamp.now().timestamp())}_{np.random.randint(0,10000)}"
+                                )
+                                
+                            # 2. Excel Download (Auto-width)
+                            buf_xlsx = io.BytesIO()
+                            with pd.ExcelWriter(buf_xlsx, engine='xlsxwriter') as writer:
+                                table.to_excel(writer, sheet_name='Data', index=False)
+                                worksheet = writer.sheets['Data']
+                                for i, col in enumerate(table.columns):
+                                    # Calculate width: max(header_len, max_cell_len) + padding
+                                    max_len = len(str(col))
+                                    column_data = table[col].astype(str)
+                                    if not column_data.empty:
+                                        max_len = max(max_len, column_data.map(len).max())
+                                    worksheet.set_column(i, i, max_len + 2)
+                            
+                            buf_xlsx.seek(0)
+                            
+                            with col_dl2:
+                                st.download_button(
+                                    label="📥 Download Excel",
+                                    data=buf_xlsx,
+                                    file_name=f"table_{q_id}_{int(pd.Timestamp.now().timestamp())}.xlsx",
+                                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                                    key=f"dl_table_xlsx_{q_id}_{int(pd.Timestamp.now().timestamp())}_{np.random.randint(0,10000)}"
+                                )
+
                         except Exception as e:
-                            st.caption(f"Table download unavailable: {e}")
+                            st.caption(f"Download unavailable: {e}")
                     else:
                         st.caption("No table data available.")
                 
@@ -1921,6 +1950,8 @@ if not sub_cat_counts.empty:
         # Add Percentage to Table
         df_overall_table = sub_cat_counts.reset_index(name='Count').rename(columns={'index': 'Sub-Category'})
         df_overall_table['Percentage'] = (df_overall_table['Count'] / df_overall_table['Count'].sum() * 100).map('{:.1f}%'.format)
+        # Apply Title Case
+        df_overall_table['Sub-Category'] = df_overall_table['Sub-Category'].astype(str).str.title()
         
         figures_list.append({
             'fig': fig,
@@ -1979,6 +2010,8 @@ for year in years:
                 # Add Percentage to Table
                 df_year_table = year_counts.reset_index(name='Count').rename(columns={'index': 'Sub-Category'})
                 df_year_table['Percentage'] = (df_year_table['Count'] / df_year_table['Count'].sum() * 100).map('{:.1f}%'.format)
+                # Apply Title Case
+                df_year_table['Sub-Category'] = df_year_table['Sub-Category'].astype(str).str.title()
                 
                 figures_list.append({
                     'fig': fig,
@@ -1996,6 +2029,8 @@ pivot_counts['Total'] = pivot_counts.sum(axis=1)
 pivot_counts['Overall %'] = (pivot_counts['Total'] / pivot_counts['Total'].sum() * 100).map('{:.1f}%'.format)
 
 df_table = pivot_counts.sort_values('Total', ascending=False).reset_index()
+# Apply Title Case
+df_table['Sub-Category'] = df_table['Sub-Category'].astype(str).str.title()
 """
 
 
@@ -2277,7 +2312,112 @@ for year in years:
 """
 
 # Q8 CODE
+# Q8 CODE
+# Q8 CODE
+# Q8 CODE
 code_q8 = """
+# 1. Filter
+df_attended = df[df['Attendance Status'].astype(str).str.lower() == 'attended'].copy()
+
+# CLEAN UP Sub-Category (Title Case)
+if 'Sub-Category' in df_attended.columns:
+    df_attended['Sub-Category'] = df_attended['Sub-Category'].astype(str).str.title()
+else:
+    df_attended['Sub-Category'] = 'Uncategorized'
+
+# 2. Identify Major Column
+# Try 'Program Classification' -> 'Program' -> 'University Program'
+if 'Program Classification' in df_attended.columns:
+    major_col = 'Program Classification'
+elif 'Program' in df_attended.columns:
+    major_col = 'Program'
+else:
+    major_col = 'University Program'
+
+# 3. Stats
+kpi_result = {}
+figures_list = []
+
+# Validate Columns
+if 'Sub-Category' not in df_attended.columns:
+    kpi_result['Status'] = "Missing 'Sub-Category' column."
+    df_table = pd.DataFrame([{"Error": kpi_result['Status']}])
+elif major_col not in df_attended.columns:
+    kpi_result['Status'] = f"Missing Major/Program column. (Checked for: {major_col})"
+    df_table = pd.DataFrame([{"Error": kpi_result['Status']}])
+else:
+    # --- PER SUB-CATEGORY ANALYSIS ONLY ---
+    # Get unique sub-categories
+    unique_subcats = sorted(df_attended['Sub-Category'].dropna().unique())
+    
+    for subcat in unique_subcats:
+        # Filter data for this sub-category (All Years)
+        df_sub = df_attended[df_attended['Sub-Category'] == subcat]
+        
+        if not df_sub.empty:
+            # Get Top 10 Majors for this Sub-Category
+            major_counts_sub = df_sub[major_col].value_counts().head(10)
+            
+            if not major_counts_sub.empty:
+                try:
+                    fig, ax = plt.subplots(figsize=(10, 6))
+                    
+                    # Color palette
+                    cmap = plt.get_cmap('tab10')
+                    colors = [cmap(i) for i in range(len(major_counts_sub))]
+                    
+                    # Custom autopct function to hide % when < 1%
+                    def autopct_format(pct):
+                        return f'{pct:.1f}%' if pct >= 1 else ''
+                    
+                    wedges, texts, autotexts = ax.pie(
+                        major_counts_sub.values,
+                        labels=None,  # No labels on slices to avoid clutter
+                        autopct=autopct_format,
+                        startangle=90,
+                        colors=colors,
+                        pctdistance=0.85,
+                        explode=[0.05 if i == 0 else 0 for i in range(len(major_counts_sub))]
+                    )
+                    
+                    # Draw circle for donut style
+                    centre_circle = plt.Circle((0,0),0.70,fc='white')
+                    fig.gca().add_artist(centre_circle)
+                    
+                    ax.set_title(f'{subcat}: Major Classification Distribution', fontsize=14, weight='bold')
+                    
+                    # Legend
+                    ax.legend(
+                        major_counts_sub.index,
+                        title=major_col,
+                        loc="center left",
+                        bbox_to_anchor=(1, 0, 0.5, 1)
+                    )
+                    
+                    ax.axis('equal')
+                    plt.tight_layout()
+                    
+                    # Table
+                    df_sub_table = major_counts_sub.reset_index(name='Count').rename(columns={'index': major_col})
+                    df_sub_table['Percentage'] = (df_sub_table['Count'] / df_sub_table['Count'].sum() * 100).map('{:.1f}%'.format)
+                    
+                    figures_list.append({
+                        'fig': fig,
+                        'title': f'{subcat} Distribution',
+                        'table': df_sub_table
+                    })
+                except:
+                    pass
+
+    # Kpi
+    kpi_result['Analysis Type'] = "Per Sub-Category Major Distribution (Pie Charts)"
+    kpi_result['Sub-Categories Analyzed'] = len(unique_subcats)
+    kpi_result['Data Scope'] = "All Data (No Yearly Split)"
+"""
+
+# Q9 CODE
+# Q9 CODE
+code_q9 = """
 # 1. Filter
 df_attended = df[df['Attendance Status'].astype(str).str.lower() == 'attended'].copy()
 
@@ -2286,7 +2426,6 @@ df_attended = df_attended.dropna(subset=['Workshop Timing_Year'])
 df_attended['Workshop Timing_Year'] = df_attended['Workshop Timing_Year'].astype(int)
 
 # 2. Logic: Calculate months until graduation using Grad attributes
-# Use Grad_Year, Grad_Month and Workshop Timing components
 def calculate_months_to_grad(row):
     try:
         # Get graduation year and month
@@ -2512,363 +2651,172 @@ df_table = df_table.reset_index()
 df_table.columns.name = None
 """
 
-# Q9 CODE
-code_q9 = """
-# 1. Filter & Setup
-df_attended = df[df['Attendance Status'].astype(str).str.lower() == 'attended'].copy()
-
-# Clean Year: Remove NaNs and convert to int
-df_attended = df_attended.dropna(subset=['Workshop Timing_Year'])
-df_attended['Workshop Timing_Year'] = df_attended['Workshop Timing_Year'].astype(int)
-
-# 2. Validate required columns
-required_cols = ['Workshop Timing_Year', 'Workshop Timing_Month', 'Workshop Timing_DayNumber', 'Registered Date', 'SIMID']
-missing_cols = [col for col in required_cols if col not in df_attended.columns]
-
-if missing_cols:
-    kpi_result = {'Status': f"Missing required columns: {', '.join(missing_cols)}"}
-    df_table = pd.DataFrame([{"Error": kpi_result['Status']}])
-    figures_list = []
-else:
-    # 3. Logic: Lead Days & Bins
-    # Reconstruct attended date from Workshop Timing components
-    df_attended = df_attended.dropna(subset=['Workshop Timing_Year', 'Workshop Timing_Month', 'Workshop Timing_DayNumber', 'Registered Date'])
-    
-    if df_attended.empty:
-        kpi_result = {'Status': 'No records with complete timing and registration data'}
-        df_table = pd.DataFrame([{"Error": kpi_result['Status']}])
-        figures_list = []
-    else:
-        # Convert month names to numbers
-        month_to_num = {
-            'january': 1, 'february': 2, 'march': 3, 'april': 4,
-            'may': 5, 'june': 6, 'july': 7, 'august': 8,
-            'september': 9, 'october': 10, 'november': 11, 'december': 12
-        }
-        
-        df_attended['Month_Num'] = df_attended['Workshop Timing_Month'].astype(str).str.lower().map(month_to_num)
-        df_attended = df_attended[df_attended['Month_Num'].notna()]
-        
-        if df_attended.empty:
-            kpi_result = {'Status': 'Invalid month names in Workshop Timing_Month'}
-            df_table = pd.DataFrame([{"Error": kpi_result['Status']}])
-            figures_list = []
-        else:
-            # Reconstruct attended date
-            df_attended['Attended_Date_Reconstructed'] = pd.to_datetime(
-                df_attended[['Workshop Timing_Year', 'Month_Num', 'Workshop Timing_DayNumber']].rename(
-                    columns={'Workshop Timing_Year': 'year', 'Month_Num': 'month', 'Workshop Timing_DayNumber': 'day'}
-                ),
-                errors='coerce'
-            )
-            
-            df_attended = df_attended[df_attended['Attended_Date_Reconstructed'].notna()]
-            
-            if df_attended.empty:
-                kpi_result = {'Status': 'Date reconstruction failed'}
-                df_table = pd.DataFrame([{"Error": kpi_result['Status']}])
-                figures_list = []
-            else:
-                # Calculate lead days
-                df_attended['Lead_Days'] = (df_attended['Attended_Date_Reconstructed'] - df_attended['Registered Date']).dt.days
-                
-                # Categorize registration timing
-                def lead_bin(days):
-                    if pd.isna(days): return 'Unknown'
-                    if days <= 0: return 'Same Day'
-                    elif days <= 3: return 'Last Minute (1-3 Days)'
-                    elif days <= 7: return 'Standard (1 Week)'
-                    else: return 'Early Bird (>1 Week)'
-                
-                df_attended['Reg_Timing'] = df_attended['Lead_Days'].apply(lead_bin)
-                
-                # Define order for consistency
-                timing_order = ['Same Day', 'Last Minute (1-3 Days)', 'Standard (1 Week)', 'Early Bird (>1 Week)', 'Unknown']
-                
-                # 4. Stats
-                kpi_result = {}
-                figures_list = []
-                
-                # 5. OVERALL Pie Chart (FIRST)
-                overall_timing_counts = df_attended['Reg_Timing'].value_counts()
-                
-                # Reindex to maintain order
-                overall_timing_counts = overall_timing_counts.reindex(
-                    [t for t in timing_order if t in overall_timing_counts.index],
-                    fill_value=0
-                )
-                overall_timing_counts = overall_timing_counts[overall_timing_counts > 0]
-                
-                if not overall_timing_counts.empty:
-                    try:
-                        fig, ax = plt.subplots(figsize=(10, 6))
-                        
-                        # Color mapping for timing categories
-                        colors_map = {
-                            'Same Day': '#ff6b6b',
-                            'Last Minute (1-3 Days)': '#feca57',
-                            'Standard (1 Week)': '#48dbfb',
-                            'Early Bird (>1 Week)': '#1dd1a1',
-                            'Unknown': '#cccccc'
-                        }
-                        colors = [colors_map.get(label, '#cccccc') for label in overall_timing_counts.index]
-                        
-                        # Custom autopct function to hide % when < 1%
-                        def autopct_format(pct):
-                            return f'{pct:.1f}%' if pct >= 1 else ''
-                        
-                        wedges, texts, autotexts = ax.pie(
-                            overall_timing_counts.values,
-                            labels=None,
-                            autopct=autopct_format,
-                            startangle=90,
-                            colors=colors,
-                            pctdistance=0.85,
-                            explode=[0.05 if i == 0 else 0 for i in range(len(overall_timing_counts))]
-                        )
-                        
-                        # Draw circle for donut style
-                        centre_circle = plt.Circle((0,0),0.70,fc='white')
-                        fig.gca().add_artist(centre_circle)
-                        
-                        ax.set_title('Overall: Registration Timing Distribution', fontsize=14, weight='bold')
-                        ax.legend(
-                            overall_timing_counts.index,
-                            title="Registration Timing",
-                            loc="center left",
-                            bbox_to_anchor=(1, 0, 0.5, 1)
-                        )
-                        ax.axis('equal')
-                        plt.tight_layout()
-                        
-                        # Create overall table
-                        df_overall_table = overall_timing_counts.reset_index(name='Count').rename(columns={'index': 'Registration Timing'})
-                        df_overall_table['Percentage'] = (df_overall_table['Count'] / df_overall_table['Count'].sum() * 100).map('{:.1f}%'.format)
-                        
-                        figures_list.append({
-                            'fig': fig,
-                            'title': 'Overall Distribution',
-                            'table': df_overall_table
-                        })
-                    except Exception as e:
-                        pass
-                
-                # 6. Yearly Pie Charts (SECOND)
-                years = sorted(df_attended['Workshop Timing_Year'].unique())
-                
-                for year in years:
-                    df_year = df_attended[df_attended['Workshop Timing_Year'] == year]
-                    
-                    if not df_year.empty:
-                        year_timing_counts = df_year['Reg_Timing'].value_counts()
-                        
-                        # Reindex to maintain order
-                        year_timing_counts = year_timing_counts.reindex(
-                            [t for t in timing_order if t in year_timing_counts.index],
-                            fill_value=0
-                        )
-                        year_timing_counts = year_timing_counts[year_timing_counts > 0]
-                        
-                        if not year_timing_counts.empty:
-                            try:
-                                fig, ax = plt.subplots(figsize=(10, 6))
-                                
-                                # Same color mapping
-                                colors = [colors_map.get(label, '#cccccc') for label in year_timing_counts.index]
-                                
-                                wedges, texts, autotexts = ax.pie(
-                                    year_timing_counts.values,
-                                    labels=None,
-                                    autopct=autopct_format,
-                                    startangle=90,
-                                    colors=colors,
-                                    pctdistance=0.85,
-                                    explode=[0.05 if i == 0 else 0 for i in range(len(year_timing_counts))]
-                                )
-                                
-                                # Draw circle for donut style
-                                centre_circle = plt.Circle((0,0),0.70,fc='white')
-                                fig.gca().add_artist(centre_circle)
-                                
-                                ax.set_title(f'{int(year)}: Registration Timing Distribution', fontsize=14, weight='bold')
-                                ax.legend(
-                                    year_timing_counts.index,
-                                    title="Registration Timing",
-                                    loc="center left",
-                                    bbox_to_anchor=(1, 0, 0.5, 1)
-                                )
-                                ax.axis('equal')
-                                plt.tight_layout()
-                                
-                                # Create table for this year
-                                df_year_table = year_timing_counts.reset_index(name='Count').rename(columns={'index': 'Registration Timing'})
-                                df_year_table['Percentage'] = (df_year_table['Count'] / df_year_table['Count'].sum() * 100).map('{:.1f}%'.format)
-                                
-                                figures_list.append({
-                                    'fig': fig,
-                                    'title': f'{int(year)} Distribution',
-                                    'table': df_year_table
-                                })
-                            except Exception as e:
-                                pass
-                
-                # 7. Summary Table (Year-by-Year Comparison)
-                timing_counts = df_attended.groupby(['Workshop Timing_Year', 'Reg_Timing']).size().unstack(fill_value=0)
-                
-                # Reorder columns
-                existing_timing = [t for t in timing_order if t in timing_counts.columns]
-                timing_counts = timing_counts[existing_timing]
-                
-                table_rows = []
-                for timing_cat in existing_timing:
-                    row_data = {
-                        "Registration Timing": timing_cat,
-                        "Total": timing_counts[timing_cat].sum()
-                    }
-                    
-                    # Add yearly counts
-                    for year in years:
-                        if year in timing_counts.index:
-                            row_data[str(year)] = timing_counts.loc[year, timing_cat]
-                        else:
-                            row_data[str(year)] = 0
-                    
-                    # Add % Changes between consecutive years
-                    if len(years) >= 2:
-                        for i in range(len(years) - 1):
-                            y1, y2 = years[i], years[i+1]
-                            c1 = timing_counts.loc[y1, timing_cat] if y1 in timing_counts.index else 0
-                            c2 = timing_counts.loc[y2, timing_cat] if y2 in timing_counts.index else 0
-                            
-                            if c1 == 0:
-                                pct = "New" if c2 > 0 else "-"
-                            else:
-                                pct = f"{((c2 - c1) / c1) * 100:+.1f}%"
-                            
-                            row_data[f"% Change ({y1}->{y2})"] = pct
-                    
-                    table_rows.append(row_data)
-                
-                df_table = pd.DataFrame(table_rows)
-"""
-
+# Q10 CODE
 # Q10 CODE
 code_q10 = """
-# Version 3.0 - Individual heatmaps per sub-category with composition tables
-# 1. Filter
-df_attended = df[df['Attendance Status'].astype(str).str.lower() == 'attended'].copy()
-
-# 2. Logic: Analyze each Sub-Category separately
+# 1. Setup
 figures_list = []
 kpi_result = {}
 
-if 'Sub-Category' in df_attended.columns and 'Program Classification' in df_attended.columns:
-    # Get unique sub-categories, sorted by total attendance
-    subcat_totals = df_attended['Sub-Category'].value_counts()
-    
-    for subcat in subcat_totals.index:
-        # Filter data for this sub-category
-        df_subcat = df_attended[df_attended['Sub-Category'] == subcat]
-        
-        if not df_subcat.empty:
-            # Count by program classification
-            prog_counts = df_subcat['Program Classification'].value_counts()
-            total_students = len(df_subcat)
-            
-            # Create composition table
-            table_data = []
-            for prog, count in prog_counts.items():
-                pct = (count / total_students * 100)
-                table_data.append({
-                    'Program Classification': prog.title() if isinstance(prog, str) else prog,
-                    'Count': int(count),
-                    'Percentage': f'{pct:.1f}%'
-                })
-            
-            df_table = pd.DataFrame(table_data)
-            df_table = df_table.sort_values('Count', ascending=False)
-            
-            # Create pie chart for this sub-category
-            try:
-                fig, ax = plt.subplots(figsize=(10, 6))
-                
-                # Create pie chart
-                # Use Set3 colormap for qualitative distinction
-                cmap = plt.get_cmap('Set3')
-                colors = [cmap(i) for i in range(len(prog_counts))]
-                
-                # Custom autopct function to hide % when < 1%
-                def autopct_format(pct):
-                    return f'{pct:.1f}%' if pct >= 1 else ''
-                
-                wedges, texts, autotexts = ax.pie(
-                    prog_counts.values,
-                    labels=None, # LEGEND ONLY
-                    autopct=autopct_format,
-                    startangle=90,
-                    colors=colors,
-                    pctdistance=0.85,
-                    explode=[0.05 if i == 0 else 0 for i in range(len(prog_counts))] # Explode the largest slice slightly
-                )
-                
-                # Draw circle for donut chart style (optional, looks modern)
-                centre_circle = plt.Circle((0,0),0.70,fc='white')
-                fig.gca().add_artist(centre_circle)
-                
-                
-                # Title with sub-category name
-                subcat_title = subcat.title() if isinstance(subcat, str) else subcat
-                ax.set_title(f'{subcat_title}: Student Composition by Academic Major', 
-                           fontsize=14, weight='bold')
-                
-                # Legend instead of labels
-                ax.legend(
-                    [p.title() if isinstance(p, str) else p for p in prog_counts.index],
-                    title="Program",
-                    loc="center left",
-                    bbox_to_anchor=(1, 0, 0.5, 1)
-                )
+# We need ALL records to compare Attended vs Absent (Registered = All)
+df_analysis = df.copy()
 
-                # Equal aspect ratio ensures that pie is drawn as a circle
-                ax.axis('equal')  
-                plt.tight_layout()
-                
-                # Add to figures list with table
-                figures_list.append({
-                    'fig': fig,
-                    'title': f'{subcat_title}',
-                    'table': df_table
-                })
-                
-            except Exception as e:
-                pass
-    
-    # Set summary stats
-    kpi_result = {
-        'Sub-Categories Analyzed': len(subcat_totals)
-    }
+# 2. Logic: Reconstruct Date & Calculate Lead Days
 
+# Clean Year
+df_analysis = df_analysis.dropna(subset=['Workshop Timing_Year'])
+df_analysis['Workshop Timing_Year'] = df_analysis['Workshop Timing_Year'].astype(int)
+
+# Reconstruct Date
+month_to_num = {
+    'january': 1, 'february': 2, 'march': 3, 'april': 4,
+    'may': 5, 'june': 6, 'july': 7, 'august': 8,
+    'september': 9, 'october': 10, 'november': 11, 'december': 12
+}
+df_analysis['Month_Num'] = df_analysis['Workshop Timing_Month'].astype(str).str.lower().map(month_to_num)
+
+# Filter valid dates for timing calculation
+required_date_cols = ['Workshop Timing_Year', 'Month_Num', 'Workshop Timing_DayNumber', 'Registered Date']
+df_analysis = df_analysis.dropna(subset=required_date_cols)
+
+if df_analysis.empty:
+    kpi_result = {'Status': 'No available data with complete timing info'}
+    df_table = pd.DataFrame([{"Error": kpi_result['Status']}])
 else:
-    kpi_result['Status'] = "Required columns 'Sub-Category' or 'Program Classification' missing."
+    # Build Date
+    df_analysis['Attended_Date_Reconstructed'] = pd.to_datetime(
+        df_analysis[['Workshop Timing_Year', 'Month_Num', 'Workshop Timing_DayNumber']].rename(
+            columns={'Workshop Timing_Year': 'year', 'Month_Num': 'month', 'Workshop Timing_DayNumber': 'day'}
+        ),
+        errors='coerce'
+    )
+    df_analysis = df_analysis.dropna(subset=['Attended_Date_Reconstructed'])
+    
+    if df_analysis.empty:
+        kpi_result = {'Status': 'Date reconstruction failed'}
+        df_table = pd.DataFrame([{"Error": kpi_result['Status']}])
+    else:
+        # Calculate Lead Days
+        df_analysis['Lead_Days'] = (df_analysis['Attended_Date_Reconstructed'] - df_analysis['Registered Date']).dt.days
+        
+        # Binning
+        def lead_bin(days):
+            if pd.isna(days): return 'Unknown'
+            if days <= 0: return 'Same Day'
+            elif days <= 3: return '1-3 Days'
+            elif days <= 7: return '1 Week'
+            else: return '>1 Week'
+        
+        df_analysis['Reg_Timing'] = df_analysis['Lead_Days'].apply(lead_bin)
+        
+        # Define Status: Attended vs Absent
+        # If 'Attended', status is 'Attended'. All else is 'Absent'.
+        df_analysis['Status_Simple'] = df_analysis['Attendance Status'].astype(str).str.lower().apply(
+            lambda x: 'Attended' if x == 'attended' else 'Absent'
+        )
+        
+        # Timing Order
+        timing_order = ['Same Day', '1-3 Days', '1 Week', '>1 Week']
+        
+        # --- Helper for plotting ---
+        def plot_grouped_bar(data_df, title_prefix, timing_order, color_registered='#00d2d3', color_attended='#2e86de'):
+            # Group by Timing and Status
+            grouped = data_df.groupby(['Reg_Timing', 'Status_Simple']).size().unstack(fill_value=0)
+            
+            # Ensure both columns exist (Attended, Absent)
+            for col in ['Attended', 'Absent']:
+                if col not in grouped.columns:
+                    grouped[col] = 0
+            
+            # Create 'Registered' (Total) column
+            grouped['Registered'] = grouped['Attended'] + grouped['Absent']
+            
+            # Reindex rows to timing order
+            valid_timings = [t for t in timing_order if t in grouped.index]
+            grouped = grouped.reindex(valid_timings)
+            
+            if grouped.empty:
+                return None, None
+            
+            fig, ax = plt.subplots(figsize=(10, 6))
+            
+            # Plot Registered vs Attended
+            x = np.arange(len(grouped))
+            width = 0.35
+            
+            rects1 = ax.bar(x - width/2, grouped['Registered'], width, label='Registered', color=color_registered)
+            rects2 = ax.bar(x + width/2, grouped['Attended'], width, label='Attended', color=color_attended)
+            
+            ax.set_ylabel('Count')
+            ax.set_title(f'{title_prefix}: Registered vs Attended by Registration Timing', fontsize=14, weight='bold')
+            ax.set_xticks(x)
+            ax.set_xticklabels(grouped.index, rotation=0)
+            ax.legend()
+            
+            # Add labels
+            def autolabel(rects):
+                for rect in rects:
+                    height = rect.get_height()
+                    if height > 0:
+                        ax.annotate(f'{height}',
+                                    xy=(rect.get_x() + rect.get_width() / 2, height),
+                                    xytext=(0, 3),
+                                    textcoords="offset points",
+                                    ha='center', va='bottom')
+            
+            autolabel(rects1)
+            autolabel(rects2)
+            
+            plt.tight_layout()
+            
+            # Create Table
+            df_t = grouped[['Registered', 'Attended']].copy()
+            df_t['Attendance Rate'] = (df_t['Attended'] / df_t['Registered'] * 100).map('{:.1f}%'.format)
+            df_t = df_t.reset_index().rename(columns={'Reg_Timing': 'Registration Timing'})
+            
+            return fig, df_t
+            
+        
+        # --- 3. Overall Analysis ---
+        try:
+            fig_all, table_all = plot_grouped_bar(df_analysis, 'Overall', timing_order)
+            if fig_all:
+                figures_list.append({
+                    'fig': fig_all,
+                    'title': 'Overall Analysis',
+                    'table': table_all
+                })
+                # Set table_all as main df_table for display
+                df_table = table_all
+        except Exception as e:
+            df_table = pd.DataFrame([{"Error": f"Overall plot error: {str(e)}"}])
 
-# Note: figures_list will be used by the rendering system
-# No need to define fig or df_table separately
+        # --- 4. Yearly Analysis ---
+        years = sorted(df_analysis['Workshop Timing_Year'].unique())
+        for year in years:
+            df_year = df_analysis[df_analysis['Workshop Timing_Year'] == year]
+            if not df_year.empty:
+                try:
+                    fig_y, table_y = plot_grouped_bar(df_year, f'{year}', timing_order)
+                    if fig_y:
+                        figures_list.append({
+                            'fig': fig_y,
+                            'title': f'{year} Analysis',
+                            'table': table_y
+                        })
+                except Exception as e:
+                    pass
+
+        # KPI Stats
+        total_recs = len(df_analysis)
+        total_attended = len(df_analysis[df_analysis['Status_Simple'] == 'Attended'])
+        kpi_result = {
+            'Total Registered': total_recs,
+            'Total Attended': total_attended,
+            'Overall Attendance Rate': f"{(total_attended/total_recs*100):.1f}%"
+        }
 """
 
-# Store original code blocks
-_code_q8_orig = code_q8
-_code_q9_orig = code_q9
-_code_q10_orig = code_q10
-
-# REORDER MAPPING
-# New Q8 = Old Q10 (Sub-Category x Major)
-code_q8 = _code_q10_orig
-
-# New Q9 = Old Q8 (Graduation Proximity)
-code_q9 = _code_q8_orig
-
-# New Q10 = Old Q9 (Registration Timing)
-code_q10 = _code_q9_orig
 
 # ==============================================================================
 # RENDER ALL BLOCKS
@@ -3072,14 +3020,14 @@ def generate_ppt(df_global, exclude_uni=False):
                 
                 # Function to set cell borders
                 from pptx.oxml.xmlchemy import OxmlElement
-
+                
                 def SubElement(parent, tagname, **kwargs):
                     element = OxmlElement(tagname)
                     element.attrib.update(kwargs)
                     parent.append(element)
                     return element
 
-                def _set_cell_border(cell, border_color="000000", border_width='12700'):
+                def _set_cell_border(cell, border_color="000000", border_width='12700'): # 12700 = 1pt
                     tc = cell._tc
                     tcPr = tc.get_or_add_tcPr()
                     for lines in ['a:lnL','a:lnR','a:lnT','a:lnB']:
@@ -3096,7 +3044,7 @@ def generate_ppt(df_global, exclude_uni=False):
                     cell = shape.cell(0, i)
                     cell.text = str(col_name)
                     cell.fill.background() # No fill
-                    _set_cell_border(cell, border_color="000000", border_width='25400')  # Black borders, thicker
+                    _set_cell_border(cell, border_color="000000", border_width='12700')  # Black borders
                     # Bold headers with black text
                     cell.text_frame.paragraphs[0].font.bold = True
                     cell.text_frame.paragraphs[0].font.size = Pt(10)
@@ -3108,7 +3056,7 @@ def generate_ppt(df_global, exclude_uni=False):
                         cell = shape.cell(r+1, c)
                         cell.text = str(df_show.iloc[r, c])
                         cell.fill.background() # No fill
-                        _set_cell_border(cell, border_color="000000", border_width='25400')  # Black borders, thicker
+                        _set_cell_border(cell, border_color="000000", border_width='12700')  # Black borders
                         cell.text_frame.paragraphs[0].font.size = Pt(10)
                         cell.text_frame.paragraphs[0].font.color.rgb = RGBColor(0, 0, 0)  # Black text
                 
@@ -3188,7 +3136,7 @@ def main():
             "Workshop Attendance by Sub-Category & Student Type",
             "Workshop Attendance by Sub-Category & Academic Major",
             "Attendance by Expected Graduation Period",
-            "Attendance Attrition by Registration Timing"
+            "Registered vs Attended by Registration Timing"
         ]
         
         # Code Map
