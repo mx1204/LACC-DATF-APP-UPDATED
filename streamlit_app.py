@@ -1,0 +1,3133 @@
+import streamlit as st
+import pandas as pd
+import matplotlib.pyplot as plt
+import seaborn as sns
+import io
+import re
+import numpy as np
+
+# --- PAGE CONFIGURATION ---
+st.set_page_config(page_title="Career Workshop Analytics Sandbox", layout="wide")
+
+# --- CUSTOM CSS FOR "NOTEBOOK" FEEL ---
+st.markdown("""
+    <style>
+    .block-container {padding-top: 2rem;}
+    .stat-card {
+        background-color: #f8f9fa;
+        border-left: 0.3rem solid #4e73df;
+        padding: 1rem;
+        margin-bottom: 0.6rem;
+        border-radius: 0.3rem;
+        box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+    }
+    .stat-title {
+        font-size: clamp(0.85rem, 1.5vw, 1rem); 
+        color: #555; 
+        font-weight: bold;
+    }
+    .stat-value {
+        font-size: clamp(1.2rem, 3vw, 1.8rem); 
+        color: #2c3e50; 
+        font-weight: bold;
+    }
+    h1, h2, h3 {color: #2c3e50;}
+    .stTextArea textarea {font-family: 'Consolas', 'Courier New', monospace; background-color: #f4f4f4;}
+    </style>
+    """, unsafe_allow_html=True)
+
+# --- HEADER ---
+# Moved to main() for consistency across pages
+
+# --- HELPER: SMART FILE LOADER ---
+def load_data_smart(uploaded_file, file_type='attendance'):
+    """
+    Scans the first 10 rows to find the correct header row.
+    For Excel files with multiple sheets, combines all sheets.
+    Criteria:
+    - Attendance: Look for 'Event Name' or 'Session Name'
+    - Taxonomy: Look for 'Career Development Workshop Titles' or 'Event Name'
+    """
+    try:
+        # Define keywords to search for in rows
+        if file_type == 'attendance':
+            keywords = ['event', 'session', 'title', 'date', 'time', 'status', 'simid', 'email', 'name', 'student', 'workshop', 'course', 'activity']
+        else:
+            keywords = ['career', 'workshop', 'event', 'category', 'title']
+        
+        # Handle Excel files with multiple sheets
+        if uploaded_file.name.endswith('.xlsx') or uploaded_file.name.endswith('.xls'):
+            try:
+                uploaded_file.seek(0)
+                excel_file = pd.ExcelFile(uploaded_file)
+                all_dfs = []
+                
+                st.toast(f"📂 Processing {uploaded_file.name} ({len(excel_file.sheet_names)} sheets)...")
+                
+                for sheet_name in excel_file.sheet_names:
+                    try:
+                        # Read first few rows to find header
+                        df_preview = pd.read_excel(excel_file, sheet_name=sheet_name, header=None, nrows=20)
+                        
+                        header_row_idx = 0
+                        found_header = False
+                        for idx, row in df_preview.iterrows():
+                            row_str = row.astype(str).str.lower().str.strip().tolist()
+                            if any(k in val for k in keywords for val in row_str):
+                                header_row_idx = idx
+                                found_header = True
+                                break
+                        
+                        # Read full sheet
+                        df_sheet = pd.read_excel(excel_file, sheet_name=sheet_name, header=header_row_idx)
+                        
+                        # Heuristic: Only add if it looks like a data table (has columns)
+                        if len(df_sheet.columns) > 0:
+                            all_dfs.append(df_sheet)
+                            if found_header:
+                                st.toast(f"✓ Loaded sheet '{sheet_name}' (Header: Row {header_row_idx+1})")
+                            else:
+                                st.toast(f"ℹ️ Loaded sheet '{sheet_name}' (Default Header)")
+                        else:
+                            st.toast(f"⚠️ Sheet '{sheet_name}' is empty.")
+                            
+                    except Exception as e:
+                        st.error(f"Error reading sheet '{sheet_name}': {e}")
+
+                if all_dfs:
+                    df = pd.concat(all_dfs, ignore_index=True)
+                    return df
+                
+                # Fallback: Hail Mary load
+                st.warning(f"⚠️ Smart load failed for {uploaded_file.name}. Trying basic load...")
+                uploaded_file.seek(0)
+                return pd.read_excel(uploaded_file)
+                
+            except Exception as e:
+                st.error(f"❌ Critical error loading Excel {uploaded_file.name}: {e}")
+                return pd.DataFrame()
+        
+        # Handle CSV files
+        else:
+            # Try different encodings
+            encodings = ['utf-8', 'ISO-8859-1', 'cp1252']
+            for enc in encodings:
+                try:
+                    # Read first few rows without header to inspect
+                    # Use sep=None to auto-detect delimiter (comma, semicolon, tab)
+                    df_preview = pd.read_csv(uploaded_file, header=None, nrows=10, encoding=enc, sep=None, engine='python')
+                    
+                    header_row_idx = 0
+                    found = False
+                    
+                    # Iterate through rows to find keywords
+                    for idx, row in df_preview.iterrows():
+                        row_str = row.astype(str).str.lower().str.strip().tolist()
+                        if any(k in val for k in keywords for val in row_str):
+                            header_row_idx = idx
+                            found = True
+                            break
+                    
+                    # Reset file pointer
+                    uploaded_file.seek(0)
+                    
+                    # Read full file
+                    df = pd.read_csv(uploaded_file, header=header_row_idx, encoding=enc, sep=None, engine='python')
+                    
+                    if not df.empty:
+                        if found:
+                            st.toast(f"✓ Loaded CSV '{uploaded_file.name}' (Header: Row {header_row_idx+1})")
+                        else:
+                            st.toast(f"ℹ️ Loaded CSV '{uploaded_file.name}' (Default Header)")
+                        return df
+                        
+                except Exception as e:
+                    continue # Try next encoding
+            
+            st.error(f"❌ Failed to load CSV {uploaded_file.name}. Checked encodings: {encodings}")
+            return pd.DataFrame()
+        
+    except Exception as e:
+        st.error(f"Error loading {uploaded_file.name}: {e}")
+        return pd.DataFrame()
+
+# --- STEP 2: BACKEND PROCESSING LOGIC ---
+
+def run_data_ingestion():
+    # --- STEP 1: DATA INGESTION ENGINE ---
+    
+    # Check if files are already loaded in session state to display them
+    loaded_att = st.session_state.get('loaded_att_files', [])
+    loaded_tax = st.session_state.get('loaded_tax_files', [])
+    
+    col_upload_1, col_upload_2 = st.columns(2)
+
+    with col_upload_1:
+        st.markdown("##### 1. Attendance Data")
+        if loaded_att:
+            st.success(f"✅ Loaded: {', '.join(loaded_att)}")
+            with st.expander("Upload New / Replace"):
+                attendance_files = st.file_uploader("Upload CSV/Excel", accept_multiple_files=True, key="att_files")
+        else:
+            attendance_files = st.file_uploader("Click to upload or drag and drop CSV/Excel files", accept_multiple_files=True, key="att_files")
+
+    with col_upload_2:
+        st.markdown("##### 2. Workshop Taxonomy")
+        if loaded_tax:
+             st.success(f"✅ Loaded: {', '.join(loaded_tax)}")
+             with st.expander("Upload New / Replace"):
+                taxonomy_files = st.file_uploader("Upload Excel/CSV", accept_multiple_files=True, key="tax_files")
+        else:
+            taxonomy_files = st.file_uploader("Click to upload or drag and drop Single Excel/CSV mapping file", accept_multiple_files=True, key="tax_files")
+
+    # Determine if we should show the Process Button
+    # Case A: New files uploaded -> Show Button
+    # Case B: Already loaded -> Button not needed unless new files uploaded?
+    # User said "maintain... unless user edit".
+    # Logic: If new files are in uploader -> Process them.
+    # If no new files but data exists -> Don't show process key, just show data.
+    
+    has_new_uploads = (attendance_files is not None and len(attendance_files) > 0) and (taxonomy_files is not None and len(taxonomy_files) > 0)
+    
+
+    # --- STEP 2: BACKEND PROCESSING LOGIC ---
+    if 'data' not in st.session_state: st.session_state['data'] = None
+    if 'review_mode' not in st.session_state: st.session_state['review_mode'] = False
+    if 'taxonomy_categories' not in st.session_state: st.session_state['taxonomy_categories'] = []
+    if 'debug_info' not in st.session_state: st.session_state['debug_info'] = {}
+
+    # Show process button only when NEW files are uploaded
+    if has_new_uploads:
+        st.markdown("")
+        process_button = st.button("Analyze Data", type="primary", use_container_width=True)
+        st.markdown("")
+    else:
+        process_button = False
+
+    # --- HOW IT WORKS SECTION ---
+    # Show instructions when not in review mode (i.e., before data is processed or when returning to upload state)
+    if not st.session_state.get('review_mode', False):
+        st.markdown("### HOW IT WORKS")
+        st.markdown("---")
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            st.info("**1. Upload Data**\n\nUpload your Attendance Logs (Box A) and Workshop Taxonomy (Box B) to begin.")
+        with col2:
+            st.info("**2. Review & Match**\n\nThe system auto-cleans data and matches events. You can manually resolve any uncategorized items.")
+        with col3:
+            st.info("**3. Analyze**\n\nRun specific analysis questions to generate interactive graphs, tables, and insights.")
+
+
+    if has_new_uploads and process_button:
+        # Save filenames to session state for persistence
+        st.session_state['loaded_att_files'] = [f.name for f in attendance_files]
+        st.session_state['loaded_tax_files'] = [f.name for f in taxonomy_files]
+        
+        with st.spinner('Processing and Merging Datasets...'):
+            try:
+                # 1. Load Attendance Data
+                att_dfs = []
+                for f in attendance_files:
+                    df_temp = load_data_smart(f, file_type='attendance')
+                    if not df_temp.empty:
+                        att_dfs.append(df_temp)
+                
+                if att_dfs:
+                    main_df = pd.concat(att_dfs, ignore_index=True)
+                else:
+                    st.error("❌ No valid attendance data loaded.")
+                    st.stop()
+
+                # 2. Load Taxonomy Data
+                tax_dfs = []
+                for f in taxonomy_files:
+                    df_temp = load_data_smart(f, file_type='taxonomy')
+                    if not df_temp.empty:
+                        tax_dfs.append(df_temp)
+                
+                if tax_dfs:
+                    tax_df = pd.concat(tax_dfs, ignore_index=True)
+                else:
+                    st.error("❌ No valid taxonomy data loaded.")
+                    st.stop()
+
+                # 3. Data Cleaning & Joining
+                # --- ROBUST COLUMN HANDLING & MERGING ---
+                # --- INDEPENDENT PROCESSING & HOLISTIC MATCHING ---
+                
+                # A. Standardize Columns (Strip whitespace only)
+                main_df.columns = main_df.columns.str.strip()
+                tax_df.columns = tax_df.columns.str.strip()
+
+                # B. Identify Critical Columns
+                # Attendance Data
+                att_event_col = next((c for c in main_df.columns if c.lower() in ['event name', 'session name', 'title']), None)
+                att_date_col = next((c for c in main_df.columns if c.lower() in ['date', 'attended date', 'attended_date', 'start date', 'event date']), None)
+                
+                if not att_event_col:
+                    st.error(f"❌ Critical Error: Column 'Event Name' not found in Attendance Data. Available columns: {list(main_df.columns)}")
+                    st.stop()
+
+                # Taxonomy Data
+                tax_title_col = next((c for c in tax_df.columns if c.lower() in ['career development workshop titles', 'workshop title', 'event name', 'title']), None)
+                # Prioritize 'Sub-Category' over 'Category'
+                tax_subcat_col = next((c for c in tax_df.columns if c.lower() in ['sub-category', 'sub category']), None)
+                if not tax_subcat_col:
+                    tax_subcat_col = next((c for c in tax_df.columns if c.lower() == 'category'), None)
+                tax_date_col = next((c for c in tax_df.columns if c.lower() in ['date', 'event date']), None)
+                tax_time_col = next((c for c in tax_df.columns if c.lower() in ['time', 'start time']), None)
+                tax_day_col = next((c for c in tax_df.columns if c.lower() in ['day', 'day of week']), None)
+                
+                if not tax_title_col:
+                    tax_title_col = tax_df.columns[0]
+                    st.warning(f"⚠️ Taxonomy Title column not found. Using '{tax_title_col}'.")
+
+                # C. Robust Time Parsing Function
+                def parse_time_range(time_str):
+                    if not isinstance(time_str, str): return None
+                    
+                    # Standardize separators
+                    t = time_str.lower().replace('.', ':').replace('to', '-').replace(' ', '')
+                    
+                    # Regex for formats like 3:30-6:30pm, 2-6pm, 09:00-17:00
+                    import re
+                    match = re.search(r'(\d{1,2}(?::\d{2})?)(?:[ap]m)?-(\d{1,2}(?::\d{2})?)([ap]m)?', t)
+                    
+                    if match:
+                        start, end, end_period = match.groups()
+                        
+                        # Infer start period from end period if missing (e.g. 2-6pm -> 2pm start)
+                        start_period = end_period if end_period else None
+                        
+                        # Helper to convert single time to 24h
+                        def to_24h(val, period):
+                            if ':' in val:
+                                h, m = map(int, val.split(':'))
+                            else:
+                                h, m = int(val), 0
+                            
+                            if period == 'pm' and h != 12: h += 12
+                            if period == 'am' and h == 12: h = 0
+                            return f"{h:02d}:{m:02d}"
+
+                        # If periods are ambiguous, standard business logic applies (9-5 is 9am-5pm)
+                        # Simple heuristic: if end_period is pm, and start > end, start is am. 
+                        # E.g. 10-2pm -> 10am-2pm. 2-4pm -> 2pm-4pm
+                        
+                        try:
+                            # Determine meridiems
+                            mp = 'pm' if 'pm' in end_period or 'pm' in t else ('am' if 'am' in t else None)
+                            
+                            # Default start period to same as end if not found? 
+                            # Or if start > end (e.g. 10-2), start is am, end is pm.
+                            
+                            # Let's simplify: if period explicit in 3rd group, use it for end.
+                            # For start, if not explicit, infer.
+                            
+                            # Just parse numbers first
+                            def get_h(val):
+                                if ':' in val: return int(val.split(':')[0])
+                                return int(val)
+                            
+                            sh = get_h(start)
+                            eh = get_h(end)
+                            
+                            sp = 'am'
+                            ep = end_period.replace('am','').replace('pm','') if end_period else mp
+                            
+                            # Heuristic: 
+                            # 9-5 -> 9am-5pm
+                            # 2-4 -> 2pm-4pm (usually events are afternoon)
+                            # 10-12 -> 10am-12pm
+                            
+                            if ep == 'pm':
+                                if eh != 12: eh += 12
+                                
+                                # If start is larger than end (in 12h), it must be AM? No.
+                                # If start < end (2-4), assume same period (pm)
+                                if sh < 12 and sh < ( eh-12): # 2 < 4
+                                    sh += 12
+                                elif sh == 12:
+                                    pass # 12pm
+                                # else keep as am (9-5 -> 9 < 17, keep 9)
+                            elif ep == 'am':
+                               if eh == 12: eh = 0
+                               if sh == 12: sh = 0
+                            
+                            # Reconstruct
+                            def fmt(h, raw):
+                                m = raw.split(':')[1] if ':' in raw else '00'
+                                return f"{h:02d}:{m}"
+                                
+                            # This logic is getting complex. Let's trust the to_24h helper if we can set periods
+                            # Let's use the provided examples as guide: "3.30-6.30PM, 2-6pm, and 9-5pm"
+                            
+                            # Case 1: 3.30-6.30PM -> Start PM, End PM.
+                            # Case 2: 2-6pm -> Start PM, End PM (Attendance events unlikely 2am)
+                            # Case 3: 9-5pm -> Start AM, End PM.
+                            
+                            # Revised Logic:
+                            # If end contains PM:
+                            #   If start hour >= 8 and start hour <= 11 -> AM
+                            #   If start hour >= 1 and start hour <= 6 -> PM
+                            #   If start hour == 12 -> PM
+                            
+                            is_pm = 'pm' in t
+                            
+                            final_start_h = sh
+                            final_end_h = eh
+                            
+                            if is_pm:
+                                if final_end_h < 12: final_end_h += 12 # 6pm -> 18
+                                if final_end_h == 12: pass # 12pm -> 12
+                                
+                                # Deduce start
+                                if 8 <= final_start_h <= 11: # 9-5pm -> 9am
+                                    pass 
+                                elif 1 <= final_start_h <= 6: # 2-6pm -> 2pm -> 14
+                                    final_start_h += 12
+                                elif final_start_h == 12: # 12-2pm -> 12pm
+                                    pass
+                                    
+                            def fmt2(h, raw):
+                                 m = raw.split(':')[1] if ':' in raw else '00'
+                                 return f"{h:02d}:{m}"
+
+                            return f"{fmt2(final_start_h, start)}-{fmt2(final_end_h, end)}"
+
+                        except:
+                            return time_str # Fallback
+                    return time_str
+
+                # Apply Time Parsing to Taxonomy
+                if tax_time_col:
+                    tax_df['Formatted_Time'] = tax_df[tax_time_col].apply(parse_time_range)
+                else:
+                    tax_df['Formatted_Time'] = None
+
+                # D. Pre-process Dates for Strict Matching
+                # We strictly need valid dates to match.
+                main_df['match_date'] = pd.to_datetime(main_df[att_date_col], dayfirst=True, errors='coerce').dt.date if att_date_col else None
+                tax_df['match_date'] = pd.to_datetime(tax_df[tax_date_col], dayfirst=True, errors='coerce').dt.date if tax_date_col else None
+
+                # E. Token Overlap Logic Helper
+                def get_tokens(text):
+                    if not isinstance(text, str): return set()
+                    # Remove punctuation, lower case
+                    clean = re.sub(r'[^\w\s]', '', text.lower())
+                    return set(clean.split())
+
+                # Prepare Taxonomy Lookup for efficiency
+                # Structure: { match_date: [ {tokens: set, subcat: str, time: str, title: str} ] }
+                tax_lookup = {}
+                for idx, row in tax_df.iterrows():
+                    d = row['match_date']
+                    if pd.isna(d): continue
+                    
+                    if d not in tax_lookup: tax_lookup[d] = []
+                    
+                    tax_lookup[d].append({
+                        'tokens': get_tokens(row[tax_title_col]),
+                        'subcat': row[tax_subcat_col] if tax_subcat_col else 'Uncategorized',
+                        'time': row['Formatted_Time'],
+                        'day': row[tax_day_col] if tax_day_col else None, # Store Day
+                        'original_title': row[tax_title_col]
+                    })
+
+                # F. Execution of Matching
+                st.info("🔍 Matching Attendance with Taxonomy (Strict Date + Title Token Overlap)...")
+
+                def match_record(row):
+                    # Default
+                    res = {'Sub-Category': 'Uncategorized', 'Matched_Time': None, 'Matched_Day': None}
+                    
+                    # Get record details
+                    r_tokens = get_tokens(row[att_event_col])
+                    
+                    best_match = None
+                    max_overlap = 0
+                    
+                    # Title-Only Match across ALL taxonomy entries
+                    # Collect all candidates from all dates
+                    all_candidates = []
+                    for date_candidates in tax_lookup.values():
+                        all_candidates.extend(date_candidates)
+                    
+                    # Token-based matching
+                    for candidate in all_candidates:
+                        c_tokens = candidate['tokens']
+                        if not c_tokens: continue
+                        
+                        intersection = r_tokens.intersection(c_tokens)
+                        overlap_score = len(intersection) / len(c_tokens) if len(c_tokens) > 0 else 0
+                        
+                        # Use 70% threshold for quality matching
+                        if overlap_score >= 0.7 and overlap_score > max_overlap:
+                            max_overlap = overlap_score
+                            best_match = candidate
+                    
+                    # Fuzzy fallback if token matching didn't work
+                    if not best_match and all_candidates:
+                        import difflib
+                        all_titles = [c['original_title'] for c in all_candidates]
+                        matches = difflib.get_close_matches(row[att_event_col], all_titles, n=1, cutoff=0.7)
+                        
+                        if matches:
+                            match_title = matches[0]
+                            for c in all_candidates:
+                                if c['original_title'] == match_title:
+                                    best_match = c
+                                    break
+                    
+                    # Apply result
+                    if best_match:
+                        res['Sub-Category'] = best_match['subcat']
+                        res['Matched_Time'] = best_match['time']
+                        res['Matched_Day'] = best_match['day']
+                        
+                    return pd.Series(res)
+
+                # Apply matching
+                matched_cols = main_df.apply(match_record, axis=1)
+                # Ensure matched_cols has specific columns in order
+                matched_cols = matched_cols[['Sub-Category', 'Matched_Time', 'Matched_Day']]
+                
+                # Save available categories for Manual Resolution
+                if tax_subcat_col:
+                    # specific categories + [DELETE]
+                    cats = sorted(tax_df[tax_subcat_col].dropna().astype(str).str.lower().unique().tolist())
+                    # Add [DELETE] as the first option
+                    cats.insert(0, '[DELETE]')
+                    st.session_state['taxonomy_categories'] = cats
+                else:
+                    st.session_state['taxonomy_categories'] = ['[DELETE]']
+                
+                merged_df = pd.concat([main_df, matched_cols], axis=1)
+                
+                # Rename Matched_Day to Workshop Timing_Day
+                if 'Matched_Day' in merged_df.columns:
+                     merged_df.rename(columns={'Matched_Day': 'Workshop Timing_Day'}, inplace=True)
+                
+                
+                # FALLBACK: Derive Day from Attended Date if missing
+                if 'Workshop Timing_Day' not in merged_df.columns and 'Attended Date' in merged_df.columns:
+                     merged_df['Workshop Timing_Day'] = pd.to_datetime(merged_df['Attended Date'], errors='coerce').dt.day_name()
+                # Also fill NaNs in existing column
+                elif 'Workshop Timing_Day' in merged_df.columns and 'Attended Date' in merged_df.columns:
+                     merged_df['Workshop Timing_Day'] = merged_df['Workshop Timing_Day'].fillna(
+                         pd.to_datetime(merged_df['Attended Date'], errors='coerce').dt.day_name()
+                     )
+
+                # Cleanup
+                if 'match_date' in merged_df.columns:
+                    merged_df.drop(columns=['match_date'], inplace=True)
+                if 'temp_match_date' in merged_df.columns:
+                     merged_df.drop(columns=['temp_match_date'], inplace=True)
+                     
+                # Save Categories for Manual Resolution
+                if tax_subcat_col:
+                    st.session_state['taxonomy_categories'] = ['[DELETE]'] + sorted(tax_df[tax_subcat_col].dropna().astype(str).str.lower().unique().tolist())
+                else:
+                    st.session_state['taxonomy_categories'] = []
+                
+                # Debug Stats
+                st.session_state['debug_info'] = {
+                    'match_attempted': len(merged_df),
+                    'matched': (merged_df['Sub-Category'] != 'Uncategorized').sum()
+                }
+
+                # 4. Derive Attributes for Analysis
+                # Map standard analysis columns but do NOT rename original columns to lose data.
+                # Instead, we COPY relevant data to standardized columns if missing.
+                
+                # Map of Standard Name -> Potential Original Columns
+                col_map = {
+                    'Event Name': [att_event_col],
+                    'Attended Date': [att_date_col],
+                    'Attendance Status': ['attendance status', 'status', 'attendance', 'registration status', 'participant status', 'rsvp status'],
+                    'Registered Date': ['registered date', 'registration date', 'reg date', 'created at', 'timestamp'],
+                    'Expected Grad Term': ['expected grad term', 'grad term', 'graduation date', 'expected graduation', 'grad date'],
+                    'Citizenship': ['citizenship', 'citizen'],
+                    'Nationality': ['nationality', 'nation'],
+                    'SIMID': ['simid', 'student id', 'id', 'sim id', 'admin number'],
+                    'University Program': ['university program', 'university', 'institution', 'partner university', 'school'],
+                    'Program': ['program', 'major', 'course', 'degree', 'study'],
+                    'Original_Time': ['time', 'attended time', 'attended_time', 'start time', 'check in time'] # Keep original time separate
+                }
+                
+                # Ensure standard columns exist for analysis code
+                for std_col, candidates in col_map.items():
+                    if std_col not in merged_df.columns:
+                        # Find first match
+                        found = next((c for c in merged_df.columns if c.lower() in [x.lower() for x in candidates]), None)
+                        if found:
+                            merged_df[std_col] = merged_df[found] # Create copy for analysis
+                        else:
+                            merged_df[std_col] = pd.NA
+                
+                # Consolidate Time
+                # Logic: If we found a Matched_Time (from Taxonomy), use it as the analysis 'Time'.
+                # Else, fall back to Original_Time.
+                # Add new standardized 'Time' column for analysis.
+                merged_df['Time'] = merged_df['Matched_Time'].combine_first(merged_df['Original_Time'])
+                
+                if 'Matched_Time' in merged_df.columns:
+                     st.toast("✓ Synced 'Time' with Taxonomy schedule where dates matched.")
+                
+                # --- NORMALIZE ATTENDANCE STATUS ---
+                # Ensure 'Attendance Status' has standard values for analysis
+                if 'Attendance Status' in merged_df.columns:
+                    def normalize_status(val):
+                        s = str(val).lower().strip()
+                        if s in ['attended', 'present', 'checked in', 'yes', 'completed', 'participated', 'show']:
+                            return 'Attended'
+                        elif s in ['absent', 'no show', 'cancelled', 'no', 'registered']:
+                            return 'Absent'
+                        return val # Keep original if unknown
+                    
+                    merged_df['Attendance Status'] = merged_df['Attendance Status'].apply(normalize_status)
+                else:
+                    # If column missing, assume everyone attended (since it's an attendance log)
+                    merged_df['Attendance Status'] = 'Attended'
+                    st.warning("⚠️ 'Attendance Status' column not found. Assuming all records are 'Attended'.")
+
+                # Ensure required columns exist
+                for col in ['Attended Date', 'Registered Date', 'Expected Grad Term']:
+                    if col not in merged_df.columns:
+                        merged_df[col] = pd.NaT
+
+                if 'Time' not in merged_df.columns:
+                    merged_df['Time'] = None
+                    
+                # Derive 'Workshop Timing_Hours'
+                # Format: '15:30-18:30' -> 15 (integer)
+                # Also handle raw strings like '7-9pm' -> 19 using AM/PM context
+                def get_start_hour(time_val):
+                    if not isinstance(time_val, str): return pd.NA
+                    s_val = time_val.lower().strip()
+                    try:
+                        # Get start part
+                        start_part = s_val.split('-')[0].strip() # '15:30' or '7' or '7pm'
+                        
+                        # Extract hour number
+                        if ':' in start_part:
+                            h = int(start_part.split(':')[0])
+                        else:
+                            # Extract digits only from start part
+                            digits = "".join(filter(str.isdigit, start_part))
+                            if not digits: return pd.NA
+                            h = int(digits)
+                        
+                        # Heuristic for AM/PM if not in 24h format (i.e., h <= 12)
+                        # If 'pm' is in the full string, we might need to adjust
+                        if 'pm' in s_val and h <= 12:
+                            # Cases:
+                            # 1. '2pm-...' -> Explicit PM in start matching
+                            if 'pm' in start_part:
+                                if h < 12: h += 12
+                            # 2. '9am-5pm' -> Explicit AM in start matching
+                            elif 'am' in start_part:
+                                if h == 12: h = 0
+                            # 3. '2-6pm' -> Implicit PM (range end has PM)
+                            else:
+                                # Start < 12. 
+                                # If start is 8, 9, 10, 11 -> Likely AM (9-5pm)
+                                # If start is 1, 2, 3, 4, 5, 6, 7 -> Likely PM (2-6pm)
+                                if 1 <= h <= 7:
+                                    h += 12
+                                # 12 is 12pm, keep it. 8-11 keep it (AM).
+                                
+                        elif 'am' in s_val and h == 12:
+                             h = 0 # 12am -> 0
+                             
+                        return h
+                    except:
+                        return pd.NA
+                        
+                merged_df['Workshop Timing_Hours'] = merged_df['Time'].apply(get_start_hour)
+
+                # --- ROBUST DATE PARSING ---
+                def parse_dates(series):
+                    # Try default first
+                    d = pd.to_datetime(series, errors='coerce')
+                    # If too many NaTs, try dayfirst
+                    if d.isna().sum() > 0.5 * len(d):
+                        d = pd.to_datetime(series, errors='coerce', dayfirst=True)
+                    # If still too many NaTs, try mixed format
+                    if d.isna().sum() > 0.5 * len(d):
+                        d = pd.to_datetime(series, errors='coerce', format='mixed')
+                    return d
+
+                merged_df['Attended Date'] = parse_dates(merged_df['Attended Date'])
+                merged_df['Registered Date'] = parse_dates(merged_df['Registered Date'])
+                
+                # Create a backup of the original string for the final export
+                if 'Expected Grad Term' in merged_df.columns:
+                    merged_df['Original_Grad_Term'] = merged_df['Expected Grad Term']
+                
+                # --- PARSE EXPECTED GRAD TERM INTO YYYY-MM FORMAT ---
+                def parse_grad_term(grad_term_str):
+                    """
+                    Parse Expected Grad Term text into year and month.
+                    Examples:
+                    - "2025-26 (Aug-Jul)" → Year: 2026, Month: Jul (07)
+                    - "2025 Semester (Jan-Jun)" → Year: 2025, Month: Jun (06)
+                    - "2024-25 (Sep-Aug)" → Year: 2025, Month: Aug (08)
+                    """
+                    if not isinstance(grad_term_str, str):
+                        return pd.NA, pd.NA, pd.NA
+                    
+                    # Month mapping
+                    month_map = {
+                        'jan': ('01', 'January'), 'feb': ('02', 'February'), 'mar': ('03', 'March'),
+                        'apr': ('04', 'April'), 'may': ('05', 'May'), 'jun': ('06', 'June'),
+                        'jul': ('07', 'July'), 'aug': ('08', 'August'), 'sep': ('09', 'September'),
+                        'oct': ('10', 'October'), 'nov': ('11', 'November'), 'dec': ('12', 'December')
+                    }
+                    
+                    grad_year = pd.NA
+                    grad_month_num = pd.NA
+                    grad_month_name = pd.NA
+                    
+                    try:
+                        # Extract month from parentheses - take the END month (second month)
+                        month_match = re.search(r'\(.*?-\s*([A-Za-z]+)\s*\)', grad_term_str)
+                        if month_match:
+                            end_month = month_match.group(1).lower()[:3]  # Get first 3 letters
+                            if end_month in month_map:
+                                grad_month_num, grad_month_name = month_map[end_month]
+                        
+                        # Extract year - look for year patterns
+                        # Case A: Range format like "2025-26" → take second year
+                        year_range_match = re.search(r'(\d{4})-(\d{2})', grad_term_str)
+                        if year_range_match:
+                            first_year = year_range_match.group(1)[:2]  # "20"
+                            second_year = year_range_match.group(2)  # "26"
+                            grad_year = int(first_year + second_year)  # "2026"
+                        else:
+                            # Case B: Single year like "2025"
+                            year_match = re.search(r'(\d{4})', grad_term_str)
+                            if year_match:
+                                grad_year = int(year_match.group(1))
+                        
+                    except:
+                        pass  # Return NAs on any error
+                    
+                    return grad_year, grad_month_name, grad_month_num
+                
+                # Apply parsing if Original_Grad_Term exists (NO 'Workshop Timing_' prefix)
+                if 'Original_Grad_Term' in merged_df.columns:
+                    parsed_grad = merged_df['Original_Grad_Term'].apply(parse_grad_term)
+                    merged_df['Grad_Year'] = parsed_grad.apply(lambda x: x[0])
+                    merged_df['Grad_Month'] = parsed_grad.apply(lambda x: x[1])
+                    grad_month_num = parsed_grad.apply(lambda x: x[2])
+                    
+                    # Create YYYY-MM format
+                    merged_df['Grad_YYYY-MM'] = merged_df.apply(
+                        lambda row: f"{int(row['Grad_Year'])}-{grad_month_num[row.name]}" 
+                        if pd.notna(row['Grad_Year']) and pd.notna(grad_month_num[row.name])
+                        else pd.NA, axis=1
+                    )
+                else:
+                    merged_df['Grad_Year'] = pd.NA
+                    merged_df['Grad_Month'] = pd.NA
+                    merged_df['Grad_YYYY-MM'] = pd.NA
+                
+                # DO NOT parse Expected Grad Term to datetime - keep original string values
+                # merged_df['Expected Grad Term'] = parse_dates(merged_df['Expected Grad Term'])  # REMOVED
+                
+                # Year (Strict: Only from Attended Date)
+                merged_df['Workshop Timing_Year'] = merged_df['Attended Date'].dt.year
+                
+                # Month (Month name, e.g., "January", "February")
+                merged_df['Workshop Timing_Month'] = merged_df['Attended Date'].dt.month_name()
+                
+                # DayNumber (Day of month, 1-31)
+                merged_df['Workshop Timing_DayNumber'] = merged_df['Attended Date'].dt.day
+
+                # Lead Time (Days) - Reconstruct attended date from components and subtract from Registered Date
+                # Create a proper datetime from Workshop Timing components
+                merged_df['_temp_attended_date'] = pd.to_datetime(
+                    merged_df[['Workshop Timing_Year', 'Workshop Timing_Month', 'Workshop Timing_DayNumber']].rename(
+                        columns={'Workshop Timing_Year': 'year', 'Workshop Timing_Month': 'month', 'Workshop Timing_DayNumber': 'day'}
+                    ),
+                    errors='coerce'
+                )
+                merged_df['Lead_Days'] = (merged_df['_temp_attended_date'] - merged_df['Registered Date']).dt.days
+                merged_df.drop(columns=['_temp_attended_date'], inplace=True)
+                
+                # Student Type (Local/Intl)
+                # Logic: If Nationality contains 'Singapore', tag Local, else Intl
+                if 'Nationality' in merged_df.columns:
+                    def get_student_type(c):
+                        c = str(c).lower()
+                        if 'singapore' in c: return 'Local'
+                        return 'International'
+                    merged_df['Student_Type'] = merged_df['Nationality'].apply(get_student_type)
+                elif 'Citizenship' in merged_df.columns:
+                     # Fallback to Citizenship if Nationality is missing
+                    def get_student_type(c):
+                        c = str(c).lower()
+                        if 'singapore' in c or 'pr' in c: return 'Local'
+                        return 'International'
+                    merged_df['Student_Type'] = merged_df['Citizenship'].apply(get_student_type)
+                else:
+                    merged_df['Student_Type'] = 'Unknown'
+
+                # --- PROGRAM CLASSIFICATION ---
+                # Categorize academic majors into broad categories with priority-based matching
+                def categorize_program(program):
+                    """
+                    Categorizes academic programs into broad categories.
+                    Priority-based matching: Foundation/Grad → Tech → Social → Business → Other
+                    """
+                    if pd.isna(program):
+                        return 'not specified'
+                    
+                    program_lower = str(program).lower()
+                    
+                    # Priority 1: Non-Degree/Advanced Programs (Graduate, Diploma, Foundation)
+                    foundation_keywords = [
+                        'graduate diploma', 'master of science', 'diploma', 'foundation programme',
+                        'foundation program', 'pre-university', 'postgraduate', 'graduate certificate',
+                        'advanced diploma', 'international foundation'
+                    ]
+                    if any(keyword in program_lower for keyword in foundation_keywords):
+                        return 'graduate, diploma, & foundation'
+                    
+                    # Priority 2: Technical Fields (Computing, IT, Engineering)
+                    tech_keywords = [
+                        'data science', 'computer science', 'cyber security', 'machine learning',
+                        'artificial intelligence', 'information technology', 'software engineering',
+                        'computer engineering', 'computing', 'it', 'cybersecurity', 'ai', 'ml',
+                        'data analytics', 'information systems', 'network', 'programming'
+                    ]
+                    if any(keyword in program_lower for keyword in tech_keywords):
+                        return 'computing & it'
+                    
+                    # Priority 3: Social Sciences & Arts
+                    social_keywords = [
+                        'psychology', 'communication', 'sociology', 'arts', 'humanities',
+                        'social science', 'political science', 'history', 'philosophy',
+                        'english', 'literature', 'media', 'journalism', 'design'
+                    ]
+                    if any(keyword in program_lower for keyword in social_keywords):
+                        return 'social sciences & arts'
+                    
+                    # Priority 4: Business & Finance
+                    business_keywords = [
+                        'business', 'management', 'accounting', 'finance', 'economics',
+                        'commerce', 'marketing', 'entrepreneurship', 'business administration',
+                        'mba', 'financial', 'banking', 'international business'
+                    ]
+                    if any(keyword in program_lower for keyword in business_keywords):
+                        return 'business & finance'
+                    
+                    # Default: Other
+                    return 'other'
+                
+                # Apply program classification
+                if 'Program' in merged_df.columns:
+                    merged_df['Program Classification'] = merged_df['Program'].apply(categorize_program)
+                else:
+                    merged_df['Program Classification'] = 'not specified'
+
+
+                # --- NORMALIZE ALL TEXT COLUMNS TO LOWERCASE ---
+                # This ensures case-insensitive operations throughout the app
+                text_columns = merged_df.select_dtypes(include=['object']).columns
+                for col in text_columns:
+                    # Skip columns that should preserve case (like SIMID)
+                    if col not in ['SIMID', 'match_key', 'Time']:
+                        try:
+                            merged_df[col] = merged_df[col].astype(str).str.lower()
+                        except:
+                            pass  # Skip if conversion fails
+
+
+                # --- BACKFILL WORKSHOP TIMING ATTRIBUTES FOR ABSENT RECORDS ---
+                # For records with missing Workshop Timing data (typically Absent status),
+                # find the closest record with the same Event Name and copy timing attributes
+                st.info("🔄 Backfilling Workshop Timing attributes for records with missing data...")
+                
+                # Identify Workshop Timing columns
+                workshop_timing_cols = [col for col in merged_df.columns if col.startswith('Workshop Timing_')]
+                
+                if workshop_timing_cols:
+                    # Find records with missing Workshop Timing data
+                    missing_mask = merged_df[workshop_timing_cols].isna().any(axis=1)
+                    records_with_missing = merged_df[missing_mask].index.tolist()
+                    
+                    backfilled_count = 0
+                    
+                    for idx in records_with_missing:
+                        # Get the event name for this record
+                        event_name = merged_df.loc[idx, 'Event Name']
+                        
+                        if pd.isna(event_name):
+                            continue
+                        
+                        # Search for nearby records with same event name and complete timing data
+                        # Search range: 10 rows above and below
+                        search_range = 10
+                        start_idx = max(0, idx - search_range)
+                        end_idx = min(len(merged_df), idx + search_range + 1)
+                        
+                        # Get nearby records
+                        nearby_records = merged_df.iloc[start_idx:end_idx]
+                        
+                        # Filter for same event name and complete timing data
+                        same_event = nearby_records[nearby_records['Event Name'] == event_name]
+                        complete_timing = same_event[~same_event[workshop_timing_cols].isna().any(axis=1)]
+                        
+                        if not complete_timing.empty:
+                            # Find the closest record (by index distance)
+                            # Convert to Series to use abs() method
+                            distances = pd.Series(complete_timing.index - idx).abs()
+                            closest_idx = complete_timing.index[distances.idxmin()]
+                            
+                            # Copy all Workshop Timing attributes from closest record
+                            for col in workshop_timing_cols:
+                                merged_df.loc[idx, col] = merged_df.loc[closest_idx, col]
+                            
+                            backfilled_count += 1
+                    
+                    if backfilled_count > 0:
+                        st.success(f"✓ Backfilled Workshop Timing data for {backfilled_count} records")
+                    else:
+                        st.info("ℹ️ No records needed backfilling")
+
+                # --- ADD UNIQUE ID COLUMN ---
+                # Generate sequential ID starting from 1
+                merged_df.insert(0, 'ID', range(1, len(merged_df) + 1))
+
+                # --- CLEANUP INTERMEDIATE COLUMNS ---
+                # Remove columns requested to be excluded from final dataset, if they are not strictly needed for global state
+                # 'Original_Time' is now merged into 'Time', so it's redundant.
+                # 'Lead_Days' is recalculated in Q10, so we can remove it from global state to keep it clean.
+                # 'Session Name' and 'Date' are removed as requested by user.
+                # 'Registered Date' is KEPT in the final dataset.
+                # We keep 'Attended Date' components (Year, Month, DayNumber) instead of raw 'Date'.
+                cols_to_drop = ['Original_Time', 'Lead_Days', 'Matched_Time', 'Session Name', 'Date']
+                merged_df.drop(columns=[c for c in cols_to_drop if c in merged_df.columns], inplace=True)
+
+                # Store in Session State & Enter Review Mode
+                st.session_state['data'] = merged_df
+                st.session_state['review_mode'] = True
+                
+                # --- AUTO NAVIGATE IF REQUESTED ---
+                # But we can't auto-navigate here because we are in a button callback?
+                # Actually, rerun will reload the app. If we set current_page to 2? NO.
+                # The user said: "when click the last button at page 1, auto go to page 2"
+                # The button is "Finish Data Prep & Go to Analysis".
+                # That button is BELOW. This block is for "Analyze Data" (initial processing).
+                
+                st.rerun()
+
+            except Exception as e:
+                st.error(f"Error processing files: {e}")
+                st.stop()
+
+    # PHASE 2: REVIEW & MANUAL RESOLUTION
+    if st.session_state['review_mode'] and st.session_state['data'] is not None:
+        merged_df = st.session_state['data']
+        
+        st.info("📊 **Data Processing Complete!** Please review the matching statistics below.")
+        
+        # --- STATISTICS ---
+        col_stat1, col_stat2, col_stat3 = st.columns(3)
+        with col_stat1:
+            st.metric("Total Events", len(merged_df))
+        with col_stat2:
+            matched_count = merged_df['Sub-Category'].ne('uncategorized').sum()
+            match_pct = matched_count/len(merged_df)*100
+            st.metric("Categorized Events", f"{matched_count} ({match_pct:.1f}%)")
+        with col_stat3:
+            st.write("") # Spacer
+            # Only enable download if all items are resolved
+            current_uncategorized = (merged_df['Sub-Category'] == 'uncategorized').sum()
+            
+            if current_uncategorized == 0:
+                csv = merged_df.to_csv(index=False).encode('utf-8')
+                st.download_button(
+                    label="📥 Download Merged Data",
+                    data=csv,
+                    file_name="merged_workshop_data.csv",
+                    mime="text/csv"
+                )
+            else:
+                st.caption(f"Resolve {current_uncategorized} items to download.")
+        
+        # --- MANUAL RESOLUTION TOOL ---
+        uncategorized_count = (merged_df['Sub-Category'] == 'uncategorized').sum()
+        
+        if uncategorized_count > 0:
+            st.warning(f"⚠️ **Action Needed**: {uncategorized_count} records remain uncategorized.")
+            
+            with st.expander("🛠️ Manual Resolution Tool - Assign or Delete Uncategorized Events", expanded=True):
+                st.markdown("**All Uncategorized Events:**")
+                st.caption("For each unique event below, either assign a Sub-Category or mark for deletion.")
+                
+                # Get all unique uncategorized event names with their counts
+                uncategorized_events = merged_df[merged_df['Sub-Category'] == 'uncategorized']['Event Name'].value_counts()
+                
+                # Get available sub-categories from taxonomy
+                available_categories = st.session_state.get('taxonomy_categories', [])
+                
+                # Create a form for batch processing
+                with st.form("manual_resolution_form"):
+                    assignments = {}
+                    
+                    # Display each uncategorized event with a dropdown
+                    for idx, (event_name, count) in enumerate(uncategorized_events.items()):
+                        col1, col2 = st.columns([3, 1])
+                        
+                        with col1:
+                            st.markdown(f"**{idx+1}. {event_name}**")
+                            st.caption(f"Appears {count} time(s)")
+                        
+                        with col2:
+                            selected_category = st.selectbox(
+                                "Action",
+                                options=available_categories,
+                                index=0,  # Default to [DELETE]
+                                key=f"cat_{idx}",
+                                label_visibility="collapsed"
+                            )
+                            assignments[event_name] = selected_category
+                        
+                        if idx < len(uncategorized_events) - 1:
+                            st.markdown("---")
+                    
+                    # Submit button
+                    st.markdown("---")
+                    submitted = st.form_submit_button("✅ Apply All Assignments", type="primary")
+                    
+                    if submitted:
+                        rows_to_delete_mask = merged_df['Event Name'].isin([e for e, act in assignments.items() if act == '[DELETE]'])
+                        
+                        # Apply Deletions
+                        if rows_to_delete_mask.sum() > 0:
+                            merged_df = merged_df[~rows_to_delete_mask]
+                            
+                        # Apply Updates
+                        for evt, cat in assignments.items():
+                            if cat != '[DELETE]':
+                                merged_df.loc[merged_df['Event Name'] == evt, 'Sub-Category'] = cat
+                        
+                        # Update Session State
+                        st.session_state['data'] = merged_df
+                        st.success("✅ Changes applied! Recalculating...")
+                        st.rerun()
+
+
+        else:
+            st.success("🎉 All events are categorized!")
+
+
+
+        # --- FINALIZE BUTTON ---
+        st.markdown("---")
+        st.markdown("### ✅ Ready to Analyze?")
+        
+        # Block progression if uncategorized items exist
+        uncategorized_count = (merged_df['Sub-Category'] == 'uncategorized').sum()
+        
+        if uncategorized_count > 0:
+            st.error(f"❌ **Cannot proceed**: {uncategorized_count} uncategorized records remain. Please use the Manual Resolution Tool above to assign categories or delete these records.")
+            st.button("Finish Data Prep & Go to Analysis", type="primary", use_container_width=True, disabled=True)
+        else:
+            # THIS IS THE BUTTON USER WANTS TO AUTO NAVIGATE
+            if st.button("Finish Data Prep & Go to Analysis", type="primary", use_container_width=True):
+                # st.session_state['review_mode'] = False  <-- REMOVED to maintain state on Page 1 return
+                st.session_state['current_page'] = 2 # Auto go to Page 2
+                st.rerun()
+
+
+
+
+
+
+# --- CONFIGURATION: EXCLUSION TERMS ---
+EXCLUSION_TERMS = [
+    "UOL", "UOB", "Warwick", "Stirling", "RMIT", "UOW", "La Trobe", "Sydney", "Monash", "UB", "Alberta", "GEM",
+    "University of London", "University of Birmingham", "The University of Warwick", "University of Stirling",
+    "RMIT University", "University of Wollongong", "La Trobe University", "The University of Sydney",
+    "Monash College", "University at Buffalo, The State University of New York", "University of Alberta",
+    "Grenoble Ecole de Management", "London", "Birmingham", "Wollongong", "Buffalo"
+]
+
+# --- PURPOSE DESCRIPTIONS FOR EACH QUESTION ---
+QUESTION_PURPOSES = {
+    1: "📈 **Analyzes overall participation trends** across years to understand workshop engagement patterns",
+    2: "👥 **Tracks student reach vs. retention** to distinguish between total volume and unique individual engagement",
+    3: "🕒 **Studies optimal workshop timing** by analyzing attendance patterns across different days of the week and hours of the day",
+    4: "🎓 **Compares university representation** to understand engagement of student in respective partner institutions",
+    5: "📚 **Breaks down workshop categories** to identify which topics attract the most students",
+    6: "🌍 **Analyzes local vs international** student participation to understand engagement differences between student types",
+    7: "🔍 **Cross-analyzes workshop categories** by student type to see which topics appeal to local vs international students",
+    8: "📊 **Cross-analyzes workshop categories** by academic major to understand which program types engage with which workshop topics",
+    9: "⏱️ **Examines graduation proximity** to understand when students attend workshops relative to their expected graduation date",
+    10: "📅 **Analyzes attrition rates** by comparing registered vs. actual attendance based on how far in advance students registered"
+}
+
+# --- FUNCTION TO RENDER SANDBOX BLOCKS ---
+def render_sandbox(q_id, title, default_code, editable_title=False):
+    st.markdown("---")
+    
+    # Create title row with Algorithm button on the right
+    col_title, col_algo, col_run = st.columns([3, 1, 1])
+    
+    with col_title:
+        if editable_title:
+            # Use session state to persist custom titles
+            key = f"title_q{q_id}"
+            if key not in st.session_state:
+                st.session_state[key] = title
+            
+            new_title = st.text_input(f"Q{q_id} Title", value=st.session_state[key], key=f"input_{key}")
+            st.session_state[key] = new_title
+            st.subheader(f"Q{q_id}: {new_title}")
+        else:
+            st.subheader(f"Q{q_id}: {title}")
+    
+    with col_algo:
+        # Initialize session state for code visibility
+        code_visibility_key = f"show_code_{q_id}"
+        if code_visibility_key not in st.session_state:
+            st.session_state[code_visibility_key] = False
+        
+        st.write("")  # Spacer for alignment
+        # Algorithm button to toggle code visibility
+        if st.button(f"🔍 Algorithm", key=f"algo_btn_{q_id}", help="View/Edit Python Logic", use_container_width=True):
+            st.session_state[code_visibility_key] = not st.session_state[code_visibility_key]
+    
+    with col_run:
+        st.write("")  # Spacer for alignment
+        run_btn = st.button(f"▶ Run Q{q_id}", key=f"btn_{q_id}", type="primary", use_container_width=True)
+    
+    # Initialize session state for edited code
+    edited_code_key = f"edited_code_{q_id}"
+    if edited_code_key not in st.session_state:
+        st.session_state[edited_code_key] = default_code
+    
+    # Toggle between Purpose view and Code Editor view
+    if st.session_state[code_visibility_key]:
+        # CODE EDITOR VIEW (Centered)
+        st.markdown("")
+        col_spacer1, col_center, col_spacer2 = st.columns([0.5, 4, 0.5])
+        
+        with col_center:
+            st.markdown("#### 💻 Algorithm Editor")
+            
+            # Editable code text area
+            edited_code = st.text_area(
+                f"Python Logic for Q{q_id}", 
+                value=st.session_state[edited_code_key], 
+                height=350, 
+                key=f"code_editor_{q_id}"
+            )
+            
+            # Save and Reset buttons
+            col_save, col_reset = st.columns([1, 1])
+            
+            with col_save:
+                if st.button("💾 Save Changes", key=f"save_{q_id}", type="primary", use_container_width=True):
+                    st.session_state[edited_code_key] = edited_code
+                    st.success("✅ Code saved! Click Run to execute.", icon="✅")
+            
+            with col_reset:
+                if st.button("🔄 Reset to Default", key=f"reset_{q_id}", use_container_width=True):
+                    st.session_state[edited_code_key] = default_code
+                    st.info("ℹ️ Code reset to default. Refresh to see changes.", icon="ℹ️")
+                    st.rerun()
+        
+        # Use the saved edited code for execution
+        code_input = st.session_state[edited_code_key]
+    
+    else:
+        # PURPOSE VIEW (Default)
+        purpose_text = QUESTION_PURPOSES.get(q_id, "Analyze workshop attendance data.")
+        st.info(purpose_text)
+        
+        # Use default code (or previously saved edits) for execution
+        code_input = st.session_state[edited_code_key]
+    
+    # Show attribute info and exclusion option in a collapsible section
+    with st.expander("⚙️ Settings & Attributes", expanded=False):
+        col_left, col_right = st.columns([3, 2])
+        
+        # Attribute Viewer (Specific & Compact)
+        attr_map = {
+            1: ['Attendance Status', 'SIMID', 'Event Name', 'Workshop Timing_Year'],
+            2: ['Attendance Status', 'SIMID', 'Workshop Timing_Year'],
+            3: ['Attendance Status', 'Workshop Timing_Day', 'Workshop Timing_Hours', 'Workshop Timing_Year'],
+            4: ['Attendance Status', 'University Program', 'Workshop Timing_Year'],
+            5: ['Attendance Status', 'Sub-Category', 'Workshop Timing_Year'],
+            6: ['Attendance Status', 'Student_Type', 'Workshop Timing_Year'],
+            7: ['Attendance Status', 'Sub-Category', 'Student_Type', 'Workshop Timing_Year'],
+            8: ['Attendance Status', 'Sub-Category', 'Program Classification'],
+            9: ['Attendance Status', 'Expected Grad Term', 'Grad_Year', 'Grad_Month', 'Grad_YYYY-MM', 'Attended Date'],
+            10: ['Attendance Status', 'Registered Date', 'Workshop Timing_Year', 'Workshop Timing_Month', 'Workshop Timing_DayNumber']
+        }
+        
+        if q_id in attr_map:
+            display_cols = attr_map[q_id]
+            msg = "Attributes used:"
+            
+            with col_left:
+                st.markdown(f"**{msg}**")
+                st.code(display_cols, language=None)
+            
+            with col_right:
+                # Exclusion Checkbox
+                exclude_uni = st.checkbox("Exclude Uni Events", key=f"exclude_{q_id}", help="Exclude workshops designed specifically for particular university")
+            
+            # --- PER-QUESTION DATA QUALITY ALERT ---
+            # Check if any required attribute has missing values in the global dataset
+            if st.session_state.get('data') is not None:
+                df_global = st.session_state['data']
+                missing_in_q = []
+                for col in display_cols:
+                    # Skip system-generated columns like ID
+                    if col in ['ID']:
+                        continue
+                    
+                    if col in df_global.columns:
+                         n_missing = df_global[col].isnull().sum()
+                         if n_missing > 0:
+                             # Get the IDs of records with missing values
+                             if 'ID' in df_global.columns:
+                                 missing_ids = df_global[df_global[col].isnull()]['ID'].tolist()
+                                 # Limit to first 10 IDs to avoid clutter
+                                 if len(missing_ids) <= 10:
+                                     ids_str = ", ".join(map(str, missing_ids))
+                                 else:
+                                     ids_str = ", ".join(map(str, missing_ids[:10])) + f"... (+{len(missing_ids)-10} more)"
+                                 missing_in_q.append(f"{col} ({n_missing}) - IDs: {ids_str}")
+                             else:
+                                 missing_in_q.append(f"{col} ({n_missing})")
+                    else:
+                        missing_in_q.append(f"{col} (Missing)")
+                
+                if missing_in_q:
+                    st.warning(f"⚠️ Potential missing data: {', '.join(missing_in_q)}")
+        else:
+            if st.session_state.get('data') is not None:
+                display_cols = list(st.session_state['data'].columns)
+            else:
+                display_cols = []
+            msg = "All attributes:"
+            
+            with col_left:
+                st.markdown(f"**{msg}**")
+                st.code(display_cols, language=None)
+            
+            with col_right:
+                # Exclusion Checkbox
+                exclude_uni = st.checkbox("Exclude Uni Events", key=f"exclude_{q_id}", help="Exclude workshops designed specifically for particular university")
+
+    if run_btn:
+        if st.session_state['data'] is None:
+            st.error("Please upload data in Box A & B first.")
+            return
+
+        # Output Containers
+        st.markdown("#### Results")
+        
+        # Prepare Data
+        df_to_use = st.session_state['data'].copy()
+        
+        if exclude_uni:
+            # Filter out events containing any exclusion term (case-insensitive)
+            pattern = '|'.join([re.escape(term) for term in EXCLUSION_TERMS])
+            # Ensure 'Event Name' exists
+            if 'Event Name' in df_to_use.columns:
+                mask = df_to_use['Event Name'].astype(str).str.contains(pattern, case=False, na=False)
+                df_to_use = df_to_use[~mask]
+                st.toast(f"ℹ️ Filtered out {mask.sum()} university-related events.", icon="🎓")
+            else:
+                st.warning("⚠️ 'Event Name' column missing. Cannot apply exclusion filter.")
+
+        # Execution Environment
+        local_vars = {
+            'df': df_to_use, 
+            'pd': pd, 
+            'plt': plt, 
+            'sns': sns,
+            'np': __import__('numpy'),
+            'kpi_result': {},
+            'fig': None,
+            'df_table': None,
+            'figures_list': []
+        }
+        
+        try:
+            # Execute User Code
+            exec(code_input, globals(), local_vars)
+            
+            # --- 1. Top Section: Years Compared ---
+            results = local_vars.get('kpi_result', {})
+            if isinstance(results, dict) and 'Years Compared' in results:
+                st.markdown(f"""
+                <div style="background-color: #e6f3ff; padding: 10px; border-radius: 5px; margin-bottom: 20px; border: 1px solid #b3d7ff;">
+                    <strong style="color: #0056b3;">📅 Years Compared:</strong> <span style="color: #333;">{results['Years Compared']}</span>
+                </div>
+                """, unsafe_allow_html=True)
+            elif isinstance(results, dict) and 'Status' in results:
+                 st.info(results['Status'])
+
+            # --- 2. Graphs & Tables Groups ---
+            figures_list = local_vars.get('figures_list', [])
+            fig = local_vars.get('fig')
+            df_table = local_vars.get('df_table')
+            
+            # Helper to render a single group
+            def render_group(table, figure, title=None):
+                if title:
+                    st.markdown(f"##### {title}")
+                
+                c1, c2 = st.columns([1, 1])
+                
+                # Left: Table
+                with c1:
+                    st.markdown("#### 📝 Analysis Report")
+                    if table is not None and not table.empty:
+                        st.dataframe(table, use_container_width=True, hide_index=True)
+                        
+                        # Download table as high-res image
+                        try:
+                            # Create a matplotlib figure for the table
+                            fig_table, ax_table = plt.subplots(figsize=(10, len(table) * 0.5 + 1))
+                            ax_table.axis('tight')
+                            ax_table.axis('off')
+                            
+                            # Create table
+                            mpl_table = ax_table.table(
+                                cellText=table.values,
+                                colLabels=table.columns,
+                                cellLoc='left',
+                                loc='center'
+                            )
+                            
+                            # Style the table
+                            mpl_table.auto_set_font_size(False)
+                            mpl_table.set_fontsize(10)
+                            mpl_table.scale(1, 2)
+                            
+                            # Header styling
+                            for i in range(len(table.columns)):
+                                cell = mpl_table[(0, i)]
+                                cell.set_facecolor('#4472C4')
+                                cell.set_text_props(weight='bold', color='white')
+                            
+                            plt.tight_layout()
+                            
+                            # Save to buffer
+                            buf_table = io.BytesIO()
+                            fig_table.savefig(buf_table, format='png', dpi=300, bbox_inches='tight', facecolor='white')
+                            buf_table.seek(0)
+                            plt.close(fig_table)
+                            
+                            st.download_button(
+                                label="📥 Download Table",
+                                data=buf_table,
+                                file_name=f"table_{q_id}_{int(pd.Timestamp.now().timestamp())}.png",
+                                mime="image/png",
+                                key=f"dl_table_{q_id}_{int(pd.Timestamp.now().timestamp())}_{np.random.randint(0,10000)}"
+                            )
+                        except Exception as e:
+                            st.caption(f"Table download unavailable: {e}")
+                    else:
+                        st.caption("No table data available.")
+                
+                # Right: Graph
+                with c2:
+                    if figure:
+                        st.pyplot(figure)
+                        # Download button
+                        buf = io.BytesIO()
+                        figure.savefig(buf, format='png', dpi=300, bbox_inches='tight')
+                        buf.seek(0)
+                        st.download_button(
+                            label="📥 Download Graph",
+                            data=buf,
+                            file_name=f"graph_{q_id}_{int(pd.Timestamp.now().timestamp())}.png",
+                            mime="image/png",
+                            key=f"dl_{q_id}_{int(pd.Timestamp.now().timestamp())}_{np.random.randint(0,1000)}"
+                        )
+
+            # Case A: Multiple Figures (from figures_list)
+            if figures_list:
+                for i, item in enumerate(figures_list):
+                    f = item.get('fig')
+                    t = item.get('table') # Expecting table in the item now
+                    title = item.get('title')
+                    
+                    # If table not explicitly in item, maybe use global df_table for the first one?
+                    # For now, let's assume Q3/Q5 updates will put it there.
+                    # Fallback: if no table in item, use empty
+                    
+                    render_group(t, f, title)
+                    st.markdown("---")
+
+            # Case B: Single Figure (Backward Compatibility)
+            elif fig or (df_table is not None and not df_table.empty):
+                render_group(df_table, fig)
+
+                    
+        except Exception as e:
+            st.error(f"❌ Logic Error: {e}")
+    else:
+        st.info("Click 'Run' to execute analysis.")
+
+# ==============================================================================
+# DEFAULT CODE BLOCKS (Pre-filled Logic)
+# ==============================================================================
+
+# Q1 CODE
+# Q1 CODE
+# Q1 CODE
+code_q1 = """
+# 1. Filter & Extract
+# Ensure we work with 'Attended' status
+df_attended = df[df['Attendance Status'].astype(str).str.lower() == 'attended'].copy()
+
+# Extract Year from Date (as requested)
+if 'Date' in df_attended.columns:
+    df_attended['Workshop Timing_Year'] = pd.to_datetime(df_attended['Date'], errors='coerce').dt.year
+    df_attended = df_attended.dropna(subset=['Workshop Timing_Year'])
+    df_attended['Workshop Timing_Year'] = df_attended['Workshop Timing_Year'].astype(int)
+else:
+    # Fallback if Date is missing but Year exists
+    if 'Workshop Timing_Year' in df_attended.columns:
+        df_attended = df_attended.dropna(subset=['Workshop Timing_Year'])
+        df_attended['Workshop Timing_Year'] = df_attended['Workshop Timing_Year'].astype(int)
+
+# 2. Logic: Total Attendance by Year
+# Count total records (Attendance) per year
+yearly_counts = df_attended.groupby('Workshop Timing_Year').size()
+
+# 3. Stats & Table Construction (same format as Q2)
+total_attendance = len(df_attended)
+years = sorted(yearly_counts.index)
+
+# Build Row Data
+row_data = {
+    "Metric": "Total Attendance",
+    "Total": total_attendance
+}
+
+# Add Yearly Counts
+for year in years:
+    row_data[str(year)] = yearly_counts[year]
+
+# Add % Changes between consecutive years
+if len(years) >= 2:
+    for i in range(len(years) - 1):
+        y1, y2 = years[i], years[i+1]
+        c1 = yearly_counts[y1]
+        c2 = yearly_counts[y2]
+        
+        if c1 == 0:
+            pct = "New" if c2 > 0 else "-"
+        else:
+            pct = f"{((c2 - c1) / c1) * 100:+.1f}%"
+        
+        row_data[f"% Change ({y1}->{y2})"] = pct
+
+# Create DataFrame
+df_table = pd.DataFrame([row_data])
+
+# Set KPI Result with Years Compared
+kpi_result = {
+    "Years Compared": ", ".join(map(str, years))
+}
+
+# 4. Graph
+if not yearly_counts.empty:
+    fig, ax = plt.subplots(figsize=(10, 6))
+    ax.plot(yearly_counts.index, yearly_counts.values, marker='o', linewidth=2, markersize=8, color='#1f77b4')
+    ax.set_title('Total Attendance Overview by Year', fontsize=14, weight='bold')
+    ax.set_xlabel('Year', fontsize=11)
+    ax.set_ylabel('Total Attendees', fontsize=11)
+    ax.grid(True, alpha=0.3, linestyle='--')
+    
+    # Format x-axis to show only integer years
+    ax.xaxis.set_major_locator(plt.MaxNLocator(integer=True))
+    
+    # Add labels
+    for year, count in yearly_counts.items():
+        ax.text(year, count, str(count), ha='center', va='bottom', fontsize=9)
+    
+    plt.tight_layout()
+else:
+    kpi_result["Status"] = "No valid attendance data found with Dates."
+    fig = None
+"""
+
+
+# Q2 CODE
+code_q2 = """
+# 1. Filter
+df_attended = df[df['Attendance Status'].astype(str).str.lower() == 'attended'].copy()
+
+# Clean Year: Remove NaNs and convert to int
+df_attended = df_attended.dropna(subset=['Workshop Timing_Year'])
+df_attended['Workshop Timing_Year'] = df_attended['Workshop Timing_Year'].astype(int)
+
+# 2. Logic: Unique count per year
+unique_per_year = df_attended.groupby('Workshop Timing_Year')['SIMID'].nunique()
+
+# 3. Stats & Table Construction
+total_unique = df_attended['SIMID'].nunique()
+years = sorted(unique_per_year.index)
+
+# Build Row Data
+row_data = {
+    "Metric": "Unique Students",
+    "Total": total_unique
+}
+
+# Add Yearly Counts
+for year in years:
+    row_data[str(year)] = unique_per_year[year]
+
+# Add % Changes
+if len(years) >= 2:
+    for i in range(len(years) - 1):
+        y1, y2 = years[i], years[i+1]
+        c1 = unique_per_year[y1]
+        c2 = unique_per_year[y2]
+        
+        if c1 == 0:
+            pct = "New" if c2 > 0 else "-"
+        else:
+            pct = f"{((c2 - c1) / c1) * 100:+.1f}%"
+        
+        row_data[f"% Change ({y1}->{y2})"] = pct
+
+# Create DataFrame
+df_table = pd.DataFrame([row_data])
+
+# Set KPI Result with Years Compared
+kpi_result = {
+    "Years Compared": ", ".join(map(str, years))
+}
+
+# 4. Graph
+fig, ax = plt.subplots(figsize=(10, 6))
+ax.plot(unique_per_year.index, unique_per_year.values, marker='o', linewidth=2, markersize=8, color='#ff7f0e')
+ax.set_title('Unique Participant Count per Year', fontsize=14, weight='bold')
+ax.set_ylabel('Number of Unique Students', fontsize=11)
+ax.set_xlabel('Year', fontsize=11)
+ax.grid(True, alpha=0.3, linestyle='--')
+
+# Format x-axis to show only integer years
+ax.xaxis.set_major_locator(plt.MaxNLocator(integer=True))
+
+# Add labels
+for year, count in unique_per_year.items():
+    ax.text(year, count, str(count), ha='center', va='bottom', fontsize=9)
+
+plt.tight_layout()
+
+# Clear bottom report
+text_report = ""
+"""
+
+# Q3 CODE
+code_q3 = """
+# 1. Filter for Attended records
+df_attended = df[df['Attendance Status'].astype(str).str.lower() == 'attended'].copy()
+
+# Clean Year: Remove NaNs and convert to int
+df_attended = df_attended.dropna(subset=['Workshop Timing_Year'])
+df_attended['Workshop Timing_Year'] = df_attended['Workshop Timing_Year'].astype(int)
+
+# Initialize defaults
+kpi_result = {}
+figures_list = []
+fig = None
+df_table = pd.DataFrame()
+
+# Normalize and map day names
+def normalize_day(day_str):
+    # Define mappings inside function to avoid scope issues when executed as string
+    days_full = {
+        'monday': 'Monday',
+        'tuesday': 'Tuesday', 
+        'wednesday': 'Wednesday',
+        'thursday': 'Thursday',
+        'friday': 'Friday',
+        'saturday': 'Saturday',
+        'sunday': 'Sunday'
+    }
+    
+    day_variations = {
+        # Monday
+        'mon': 'monday', 'mond': 'monday',
+        # Tuesday
+        'tue': 'tuesday', 'tues': 'tuesday', 'tu': 'tuesday',
+        # Wednesday
+        'wed': 'wednesday', 'weds': 'wednesday',
+        # Thursday
+        'thu': 'thursday', 'thur': 'thursday', 'thurs': 'thursday',
+        # Friday
+        'fri': 'friday',
+        # Saturday
+        'sat': 'saturday',
+        # Sunday
+        'sun': 'sunday'
+    }
+    
+    if pd.isna(day_str):
+        return None
+    
+    # Clean: lowercase, strip whitespace
+    clean = str(day_str).lower().strip()
+    
+    # Direct match with full name
+    if clean in days_full:
+        return days_full[clean]
+    
+    # Match with abbreviations
+    if clean in day_variations:
+        return days_full[day_variations[clean]]
+    
+    # Fuzzy match (for typos)
+    import difflib
+    all_day_keys = list(days_full.keys()) + list(day_variations.keys())
+    matches = difflib.get_close_matches(clean, all_day_keys, n=1, cutoff=0.7)
+    
+    if matches:
+        matched_key = matches[0]
+        if matched_key in days_full:
+            return days_full[matched_key]
+        elif matched_key in day_variations:
+            return days_full[day_variations[matched_key]]
+    
+    return None
+
+# 2. Validate required columns exist
+if 'Workshop Timing_Day' not in df_attended.columns or 'Workshop Timing_Hours' not in df_attended.columns:
+    missing = []
+    if 'Workshop Timing_Day' not in df_attended.columns: missing.append('Workshop Timing_Day')
+    if 'Workshop Timing_Hours' not in df_attended.columns: missing.append('Workshop Timing_Hours')
+    
+    kpi_result['Status'] = f"Missing required columns: {', '.join(missing)}"
+    df_table = pd.DataFrame([{"Error": kpi_result['Status']}])
+else:
+    # Filter for valid timing data
+    df_attended = df_attended.dropna(subset=['Workshop Timing_Day', 'Workshop Timing_Hours'])
+    
+    if df_attended.empty:
+        kpi_result['Status'] = "No valid timing data found for attended events."
+        df_table = pd.DataFrame([{"Error": "No valid timing data", "Debug": f"Attended records: {len(df[df['Attendance Status'].astype(str).str.lower() == 'attended'])}"}])
+    else:
+        # Convert Hour to integer
+        df_attended['Hour'] = pd.to_numeric(df_attended['Workshop Timing_Hours'], errors='coerce').astype('Int64')
+        
+        # Check if hours are valid
+        valid_hours = df_attended['Hour'].notna()
+        if not valid_hours.any():
+            kpi_result['Status'] = "No valid hour data found."
+            df_table = pd.DataFrame([{"Error": "Invalid hour format", "Sample Hours": str(df_attended['Workshop Timing_Hours'].head(3).tolist())}])
+        else:
+            df_attended = df_attended[valid_hours]
+            
+            # Apply normalization
+            df_attended['Day_Normalized'] = df_attended['Workshop Timing_Day'].apply(normalize_day)
+            
+            # Filter out rows where day couldn't be normalized
+            df_attended = df_attended[df_attended['Day_Normalized'].notna()]
+            
+            if df_attended.empty:
+                kpi_result['Status'] = "No valid day names found."
+                df_table = pd.DataFrame([{"Error": "Invalid day names", "Sample Days": str(df[df['Attendance Status'].astype(str).str.lower() == 'attended']['Workshop Timing_Day'].unique()[:5].tolist())}])
+            else:
+                # Create ordered categorical with proper case
+                days_order = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday']
+                df_attended['Day_Ordered'] = pd.Categorical(
+                    df_attended['Day_Normalized'], 
+                    categories=days_order, 
+                    ordered=True
+                )
+                
+                # Update Workshop Timing_Day to use normalized values
+                df_attended['Workshop Timing_Day'] = df_attended['Day_Normalized']
+        
+                # 3. Overall Analysis
+                # Top 3 Time Slots
+                overall_slots = df_attended.groupby(['Workshop Timing_Day', 'Hour']).size().sort_values(ascending=False).head(3)
+                
+                overall_data = []
+                for rank, ((day, hour), count) in enumerate(overall_slots.items(), 1):
+                    overall_data.append({
+                        'Rank': rank,
+                        'Day': day,
+                        'Time Slot': f"{int(hour):02d}:00",
+                        'Attendance Count': count
+                    })
+                
+                df_overall_table = pd.DataFrame(overall_data)
+                
+                # Overall Heatmap
+                pivot_overall = df_attended.pivot_table(
+                    index='Day_Ordered', 
+                    columns='Hour', 
+                    values='SIMID', 
+                    aggfunc='count', 
+                    fill_value=0
+                )
+                
+                if not pivot_overall.empty:
+                    try:
+                        fig, ax = plt.subplots(figsize=(14, 6))
+                        sns.heatmap(pivot_overall, cmap="YlGnBu", annot=True, fmt="d", ax=ax, cbar_kws={'label': 'Attendance Count'})
+                        ax.set_title('Overall: Workshop Attendance by Day and Hour', fontsize=14, weight='bold')
+                        ax.set_xlabel('Hour of Day')
+                        ax.set_ylabel('Day of Week')
+                        plt.tight_layout()
+                        
+                        figures_list.append({
+                            'fig': fig,
+                            'title': 'Overall Heatmap',
+                            'table': df_overall_table
+                        })
+                    except Exception as e:
+                        pass
+                
+                # 4. Yearly Analysis
+                years = sorted(df_attended['Workshop Timing_Year'].unique())
+                
+                yearly_data = []
+                for year in years:
+                    df_year = df_attended[df_attended['Workshop Timing_Year'] == year]
+                    
+                    if not df_year.empty:
+                        # Top 3 Time Slots for this year
+                        year_slots = df_year.groupby(['Workshop Timing_Day', 'Hour']).size().sort_values(ascending=False).head(3)
+                        
+                        for rank, ((day, hour), count) in enumerate(year_slots.items(), 1):
+                            yearly_data.append({
+                                'Year': int(year),
+                                'Rank': rank,
+                                'Day': day,
+                                'Time Slot': f"{int(hour):02d}:00",
+                                'Attendance Count': count
+                            })
+                        
+                        # Year-specific table
+                        df_year_table = pd.DataFrame([
+                            {
+                                'Rank': rank,
+                                'Day': day,
+                                'Time Slot': f"{int(hour):02d}:00",
+                                'Attendance Count': count
+                            }
+                            for rank, ((day, hour), count) in enumerate(year_slots.items(), 1)
+                        ])
+                        
+                        # Yearly Heatmap
+                        pivot_year = df_year.pivot_table(
+                            index='Day_Ordered',
+                            columns='Hour',
+                            values='SIMID',
+                            aggfunc='count',
+                            fill_value=0
+                        )
+                        
+                        if not pivot_year.empty:
+                            try:
+                                fig, ax = plt.subplots(figsize=(14, 6))
+                                sns.heatmap(pivot_year, cmap="YlGnBu", annot=True, fmt="d", ax=ax, cbar_kws={'label': 'Attendance Count'})
+                                ax.set_title(f'{int(year)}: Workshop Attendance by Day and Hour', fontsize=14, weight='bold')
+                                ax.set_xlabel('Hour of Day')
+                                ax.set_ylabel('Day of Week')
+                                plt.tight_layout()
+                                
+                                figures_list.append({
+                                    'fig': fig,
+                                    'title': f'{int(year)} Heatmap',
+                                    'table': df_year_table
+                                })
+                            except Exception as e:
+                                pass
+                
+                # 5. Create combined summary table
+                df_yearly_all = pd.DataFrame(yearly_data)
+                
+                # Add separator
+                separator = pd.DataFrame([{'Year': '---', 'Rank': '---', 'Day': '---', 'Time Slot': '---', 'Attendance Count': '---'}])
+                
+                # Overall section with Year column
+                df_overall_display = df_overall_table.copy()
+                df_overall_display.insert(0, 'Year', 'Overall')
+                
+                # Combine: Overall + Separator + Yearly
+                df_table = pd.concat([df_overall_display, separator, df_yearly_all], ignore_index=True)
+                
+                # Set KPI
+                if overall_data:
+                    top_slot = overall_data[0]
+                    kpi_result['Most Popular Slot'] = f"{top_slot['Day']} {top_slot['Time Slot']} ({top_slot['Attendance Count']} attendees)"
+                else:
+                    kpi_result['Status'] = 'No data available'
+"""
+
+
+
+# Q4 CODE
+code_q4 = """
+# 1. Filter
+df_attended = df[df['Attendance Status'].astype(str).str.lower() == 'attended'].copy()
+
+# Clean Year: Remove NaNs and convert to int
+df_attended = df_attended.dropna(subset=['Workshop Timing_Year'])
+df_attended['Workshop Timing_Year'] = df_attended['Workshop Timing_Year'].astype(int)
+
+# 2. Logic
+# Clean University Name (take first part before comma if applicable) and Title Case
+df_attended['Uni_Clean'] = df_attended['University Program'].astype(str).apply(lambda x: x.split(',')[0]).str.title()
+
+# Identify Top 10 Universities Overall for Graph
+top_10_unis = df_attended['Uni_Clean'].value_counts().head(10).index
+df_top_10 = df_attended[df_attended['Uni_Clean'].isin(top_10_unis)].copy()
+
+# Aggregate by University and Year for Graph
+uni_year_counts = df_top_10.groupby(['Uni_Clean', 'Workshop Timing_Year']).size().reset_index(name='Count')
+
+# 3. Stats
+kpi_result = {
+    "Years Compared": ", ".join(map(str, sorted(df_attended['Workshop Timing_Year'].unique())))
+}
+
+# 4. Graph
+fig, ax = plt.subplots(figsize=(12, 8))
+sns.barplot(
+    data=uni_year_counts, 
+    y='Uni_Clean', 
+    x='Count', 
+    hue='Workshop Timing_Year', 
+    palette='viridis', 
+    order=top_10_unis, # Maintain overall top 10 order
+    ax=ax
+)
+ax.set_title('Top 10 Universities: Attendance Comparison by Year')
+ax.set_xlabel('Number of Attendees')
+ax.set_ylabel('University')
+ax.legend(title='Year')
+plt.tight_layout()
+
+# 5. Table & Description
+# Aggregate ALL universities
+all_uni_counts = df_attended.groupby(['Uni_Clean', 'Workshop Timing_Year']).size().unstack(fill_value=0)
+# Sort by total
+all_uni_counts['Total'] = all_uni_counts.sum(axis=1)
+all_uni_counts = all_uni_counts.sort_values('Total', ascending=False).drop(columns='Total')
+
+# Calculate % Increase
+years = sorted(df_attended['Workshop Timing_Year'].unique())
+if len(years) >= 2:
+    for i in range(len(years) - 1):
+        y1, y2 = years[i], years[i+1]
+        col_name = f'% Change ({y1}->{y2})'
+        
+        all_uni_counts[col_name] = all_uni_counts.apply(
+            lambda row, start=y1, end=y2: (
+                f"{((row[end] - row[start]) / row[start]) * 100:+.1f}%" 
+                if row[start] != 0 
+                else ("New" if row[end] > 0 else "-")
+            ), 
+            axis=1
+        )
+
+# Reset index to make University a column
+df_table = all_uni_counts.reset_index()
+
+text_report = ""
+"""
+
+# Q5 CODE
+# Q5 CODE
+# Q5 CODE
+code_q5 = """
+# 1. Filter
+df_attended = df[df['Attendance Status'].astype(str).str.lower() == 'attended'].copy()
+
+# Clean Year: Remove NaNs and convert to int
+df_attended = df_attended.dropna(subset=['Workshop Timing_Year'])
+df_attended['Workshop Timing_Year'] = df_attended['Workshop Timing_Year'].astype(int)
+
+# 2. Logic: Attendance by Sub-Category
+sub_cat_counts = df_attended['Sub-Category'].value_counts()
+
+# 3. Stats
+kpi_result = {
+    "Years Compared": ", ".join(map(str, sorted(df_attended['Workshop Timing_Year'].unique())))
+}
+
+figures_list = []
+df_table = pd.DataFrame()
+
+# 4. Graph: Overall Pie Chart
+if not sub_cat_counts.empty:
+    try:
+        fig, ax = plt.subplots(figsize=(10, 6))
+        
+        # Create pie chart
+        # Use pastel colormap
+        cmap = plt.get_cmap('Pastel1')
+        colors = [cmap(i) for i in range(len(sub_cat_counts))]
+        
+        # Custom autopct function to hide % when < 1%
+        def autopct_format(pct):
+            return f'{pct:.1f}%' if pct >= 1 else ''
+        
+        wedges, texts, autotexts = ax.pie(
+            sub_cat_counts.values,
+            labels=None,  # No labels on pie slices, use legend only
+            autopct=autopct_format,
+            startangle=90,
+            colors=colors,
+            pctdistance=0.85,
+            explode=[0.05 if i == 0 else 0 for i in range(len(sub_cat_counts))]
+        )
+        
+        
+        # Draw circle for donut style
+        centre_circle = plt.Circle((0,0),0.70,fc='white')
+        fig.gca().add_artist(centre_circle)
+        
+        ax.set_title('Overall Workshop Attendance by Sub-Category', fontsize=14, weight='bold')
+        ax.legend(
+            [s.title() if isinstance(s, str) else s for s in sub_cat_counts.index],
+            title="Sub-Category",
+            loc="center left",
+            bbox_to_anchor=(1, 0, 0.5, 1)
+        )
+        ax.axis('equal')
+        plt.tight_layout()
+        
+        # Add Percentage to Table
+        df_overall_table = sub_cat_counts.reset_index(name='Count').rename(columns={'index': 'Sub-Category'})
+        df_overall_table['Percentage'] = (df_overall_table['Count'] / df_overall_table['Count'].sum() * 100).map('{:.1f}%'.format)
+        
+        figures_list.append({
+            'fig': fig,
+            'title': 'Overall Distribution',
+            'table': df_overall_table
+        })
+        
+    except Exception as e:
+        kpi_result["Status"] = f"Error plotting Overall Pie Chart: {e}"
+else:
+    kpi_result["Status"] = "No valid Sub-Category data found."
+
+# 5. Graph: Yearly Pie Charts
+years = sorted(df_attended['Workshop Timing_Year'].unique())
+for year in years:
+    df_year = df_attended[df_attended['Workshop Timing_Year'] == year]
+    if not df_year.empty:
+        year_counts = df_year['Sub-Category'].value_counts()
+        
+        if not year_counts.empty:
+            try:
+                fig, ax = plt.subplots(figsize=(10, 6))
+                
+                # Create pie chart for year
+                cmap = plt.get_cmap('Pastel1')
+                colors = [cmap(i) for i in range(len(year_counts))]
+                
+                # Custom autopct function to hide % when < 1%
+                def autopct_format(pct):
+                    return f'{pct:.1f}%' if pct >= 1 else ''
+                
+                wedges, texts, autotexts = ax.pie(
+                    year_counts.values,
+                    labels=None,  # No labels on pie slices, use legend only
+                    autopct=autopct_format,
+                    startangle=90,
+                    colors=colors,
+                    pctdistance=0.85,
+                    explode=[0.05 if i == 0 else 0 for i in range(len(year_counts))]
+                )
+                
+                
+                centre_circle = plt.Circle((0,0),0.70,fc='white')
+                fig.gca().add_artist(centre_circle)
+                
+                ax.set_title(f'{year} Workshop Attendance by Sub-Category', fontsize=14, weight='bold')
+                ax.legend(
+                    [s.title() if isinstance(s, str) else s for s in year_counts.index],
+                    title="Sub-Category",
+                    loc="center left",
+                    bbox_to_anchor=(1, 0, 0.5, 1)
+                )
+                ax.axis('equal')
+                plt.tight_layout()
+                
+                # Add Percentage to Table
+                df_year_table = year_counts.reset_index(name='Count').rename(columns={'index': 'Sub-Category'})
+                df_year_table['Percentage'] = (df_year_table['Count'] / df_year_table['Count'].sum() * 100).map('{:.1f}%'.format)
+                
+                figures_list.append({
+                    'fig': fig,
+                    'title': f'{year} Distribution',
+                    'table': df_year_table
+                })
+            except Exception as e:
+                pass
+
+# 6. Table: Overall Comparison
+# Pivot to show counts per year
+pivot_counts = df_attended.pivot_table(index='Sub-Category', columns='Workshop Timing_Year', values='SIMID', aggfunc='count', fill_value=0)
+pivot_counts['Total'] = pivot_counts.sum(axis=1)
+# Add Overall Percentage
+pivot_counts['Overall %'] = (pivot_counts['Total'] / pivot_counts['Total'].sum() * 100).map('{:.1f}%'.format)
+
+df_table = pivot_counts.sort_values('Total', ascending=False).reset_index()
+"""
+
+
+# Q6 CODE
+code_q6 = """
+# 1. Filter
+df_attended = df[df['Attendance Status'].astype(str).str.lower() == 'attended'].copy()
+
+# Clean Year: Remove NaNs and convert to int
+df_attended = df_attended.dropna(subset=['Workshop Timing_Year'])
+df_attended['Workshop Timing_Year'] = df_attended['Workshop Timing_Year'].astype(int)
+
+# 2. Logic
+# Student Type is already calculated in backend, but user code re-defines it
+def get_student_type(val):
+    val = str(val).lower()
+    if 'singapore' in val:
+        return 'Local'
+    return 'International'
+
+if 'Nationality' in df_attended.columns:
+    df_attended['Student_Type'] = df_attended['Nationality'].apply(get_student_type)
+elif 'Citizenship' in df_attended.columns:
+    df_attended['Student_Type'] = df_attended['Citizenship'].apply(get_student_type)
+
+# 3. Stats
+kpi_result = {}
+figures_list = []
+
+# 4. Yearly Pie Charts
+years = sorted(df_attended['Workshop Timing_Year'].unique())
+
+for year in years:
+    df_year = df_attended[df_attended['Workshop Timing_Year'] == year]
+    
+    if not df_year.empty:
+        year_type_counts = df_year['Student_Type'].value_counts()
+        
+        if not year_type_counts.empty:
+            try:
+                fig, ax = plt.subplots(figsize=(10, 6))
+                
+                # Color mapping: Local = light blue, International = light coral
+                colors_map = {'Local': '#66b3ff', 'International': '#ff9999'}
+                colors = [colors_map.get(label, '#cccccc') for label in year_type_counts.index]
+                
+                # Custom autopct function to hide % when < 1%
+                def autopct_format(pct):
+                    return f'{pct:.1f}%' if pct >= 1 else ''
+                
+                wedges, texts, autotexts = ax.pie(
+                    year_type_counts.values,
+                    labels=None,  # No labels on pie slices, use legend only
+                    autopct=autopct_format,
+                    startangle=90,
+                    colors=colors,
+                    pctdistance=0.85,
+                    explode=[0.05 if i == 0 else 0 for i in range(len(year_type_counts))]
+                )
+                
+                # Draw circle for donut style
+                centre_circle = plt.Circle((0,0),0.70,fc='white')
+                fig.gca().add_artist(centre_circle)
+                
+                ax.set_title(f'{int(year)}: Local vs International Student Attendance', fontsize=14, weight='bold')
+                ax.legend(
+                    year_type_counts.index,
+                    title="Student Type",
+                    loc="center left",
+                    bbox_to_anchor=(1, 0, 0.5, 1)
+                )
+                ax.axis('equal')
+                plt.tight_layout()
+                
+                # Create table for this year
+                df_year_table = year_type_counts.reset_index(name='Count').rename(columns={'index': 'Student Type'})
+                df_year_table['Percentage'] = (df_year_table['Count'] / df_year_table['Count'].sum() * 100).map('{:.1f}%'.format)
+                
+                figures_list.append({
+                    'fig': fig,
+                    'title': f'{int(year)} Distribution',
+                    'table': df_year_table
+                })
+            except Exception as e:
+                pass
+
+# 5. Overall Pie Chart
+overall_type_counts = df_attended['Student_Type'].value_counts()
+
+if not overall_type_counts.empty:
+    try:
+        fig, ax = plt.subplots(figsize=(10, 6))
+        
+        # Same color mapping
+        colors_map = {'Local': '#66b3ff', 'International': '#ff9999'}
+        colors = [colors_map.get(label, '#cccccc') for label in overall_type_counts.index]
+        
+        # Custom autopct function to hide % when < 1%
+        def autopct_format(pct):
+            return f'{pct:.1f}%' if pct >= 1 else ''
+        
+        wedges, texts, autotexts = ax.pie(
+            overall_type_counts.values,
+            labels=None,  # No labels on pie slices, use legend only
+            autopct=autopct_format,
+            startangle=90,
+            colors=colors,
+            pctdistance=0.85,
+            explode=[0.05 if i == 0 else 0 for i in range(len(overall_type_counts))]
+        )
+        
+        # Draw circle for donut style
+        centre_circle = plt.Circle((0,0),0.70,fc='white')
+        fig.gca().add_artist(centre_circle)
+        
+        ax.set_title('Overall: Local vs International Student Attendance', fontsize=14, weight='bold')
+        ax.legend(
+            overall_type_counts.index,
+            title="Student Type",
+            loc="center left",
+            bbox_to_anchor=(1, 0, 0.5, 1)
+        )
+        ax.axis('equal')
+        plt.tight_layout()
+        
+        # Create overall table
+        df_overall_table = overall_type_counts.reset_index(name='Count').rename(columns={'index': 'Student Type'})
+        df_overall_table['Percentage'] = (df_overall_table['Count'] / df_overall_table['Count'].sum() * 100).map('{:.1f}%'.format)
+        
+        figures_list.append({
+            'fig': fig,
+            'title': 'Overall Distribution',
+            'table': df_overall_table
+        })
+    except Exception as e:
+        pass
+
+# 6. Summary Table (Year-by-Year Comparison)
+type_counts = df_attended.groupby(['Workshop Timing_Year', 'Student_Type']).size().unstack(fill_value=0)
+
+table_rows = []
+for student_type in type_counts.columns:
+    row_data = {
+        "Student Type": student_type,
+        "Total": type_counts[student_type].sum()
+    }
+    
+    # Add yearly counts
+    for year in years:
+        row_data[str(year)] = type_counts.loc[year, student_type]
+    
+    # Add % Changes between consecutive years
+    if len(years) >= 2:
+        for i in range(len(years) - 1):
+            y1, y2 = years[i], years[i+1]
+            c1 = type_counts.loc[y1, student_type]
+            c2 = type_counts.loc[y2, student_type]
+            
+            if c1 == 0:
+                pct = "New" if c2 > 0 else "-"
+            else:
+                pct = f"{((c2 - c1) / c1) * 100:+.1f}%"
+            
+            row_data[f"% Change ({y1}->{y2})"] = pct
+    
+    table_rows.append(row_data)
+
+df_table = pd.DataFrame(table_rows)
+"""
+
+
+# Q7 CODE
+code_q7 = """
+# 1. Filter
+df_attended = df[df['Attendance Status'].astype(str).str.lower() == 'attended'].copy()
+
+# Clean Year: Remove NaNs and convert to int
+df_attended = df_attended.dropna(subset=['Workshop Timing_Year'])
+df_attended['Workshop Timing_Year'] = df_attended['Workshop Timing_Year'].astype(int)
+
+# 2. Logic: Sub-Category vs Student Type
+# Define Student Type if not already in data
+def get_student_type(val):
+    val = str(val).lower()
+    if 'singapore' in val:
+        return 'Local'
+    return 'International'
+
+if 'Nationality' in df_attended.columns:
+    df_attended['Student_Type'] = df_attended['Nationality'].apply(get_student_type)
+elif 'Citizenship' in df_attended.columns:
+    df_attended['Student_Type'] = df_attended['Citizenship'].apply(get_student_type)
+
+# Group by Sub-Category and Student Type
+subcat_student_counts = df_attended.groupby(['Sub-Category', 'Student_Type']).size().unstack(fill_value=0)
+
+# Ensure both columns exist
+for col in ['Local', 'International']:
+    if col not in subcat_student_counts.columns:
+        subcat_student_counts[col] = 0
+
+# 3. Stats
+kpi_result = {}
+figures_list = []
+
+# --- OVERALL ANALYSIS ---
+# 4a. Overall Graph
+fig, ax = plt.subplots(figsize=(12, 6))
+subcat_student_counts.plot(kind='bar', stacked=False, color=['#ff9999', '#66b3ff'], ax=ax)
+ax.set_title('Overall Workshop Attendance by Sub-Category & Student Type')
+ax.set_xlabel('Sub-Category')
+ax.set_ylabel('Number of Attendees')
+ax.legend(title='Student Type')
+plt.xticks(rotation=45, ha='right')
+plt.tight_layout()
+
+# 4b. Overall Table
+df_overall = subcat_student_counts.copy()
+df_overall['Total'] = df_overall.sum(axis=1)
+df_overall['Local %'] = (df_overall['Local'] / df_overall['Total'] * 100).map('{:.1f}%'.format)
+df_overall['International %'] = (df_overall['International'] / df_overall['Total'] * 100).map('{:.1f}%'.format)
+# Reorder columns
+df_overall = df_overall[['Local', 'Local %', 'International', 'International %', 'Total']]
+df_overall = df_overall.sort_values('Total', ascending=False).reset_index()
+
+figures_list.append({
+    'fig': fig,
+    'title': 'Overall Analysis',
+    'table': df_overall
+})
+
+# Use Overall table as default
+df_table = df_overall
+
+# --- YEARLY ANALYSIS ---
+years = sorted(df_attended['Workshop Timing_Year'].unique())
+for year in years:
+    df_year = df_attended[df_attended['Workshop Timing_Year'] == year]
+    if not df_year.empty:
+        # Group by Sub-Category and Student Type for this Year
+        year_counts = df_year.groupby(['Sub-Category', 'Student_Type']).size().unstack(fill_value=0)
+        
+        # Ensure cols exist
+        for col in ['Local', 'International']:
+            if col not in year_counts.columns:
+                year_counts[col] = 0
+                
+        # Graph
+        fig, ax = plt.subplots(figsize=(12, 6))
+        year_counts.plot(kind='bar', stacked=False, color=['#ff9999', '#66b3ff'], ax=ax)
+        ax.set_title(f'{year} Workshop Attendance by Sub-Category & Student Type')
+        ax.set_xlabel('Sub-Category')
+        ax.set_ylabel('Number of Attendees')
+        ax.legend(title='Student Type')
+        plt.xticks(rotation=45, ha='right')
+        plt.tight_layout()
+        
+        # Table
+        df_year_table = year_counts.copy()
+        df_year_table['Total'] = df_year_table.sum(axis=1)
+        # Avoid division by zero
+        df_year_table['Local %'] = df_year_table.apply(lambda x: f"{(x['Local']/x['Total']*100):.1f}%" if x['Total']>0 else "0.0%", axis=1)
+        df_year_table['International %'] = df_year_table.apply(lambda x: f"{(x['International']/x['Total']*100):.1f}%" if x['Total']>0 else "0.0%", axis=1)
+        
+        df_year_table = df_year_table[['Local', 'Local %', 'International', 'International %', 'Total']]
+        df_year_table = df_year_table.sort_values('Total', ascending=False).reset_index()
+        
+        figures_list.append({
+            'fig': fig,
+            'title': f'{year} Analysis',
+            'table': df_year_table
+        })
+"""
+
+# Q8 CODE
+code_q8 = """
+# 1. Filter
+df_attended = df[df['Attendance Status'].astype(str).str.lower() == 'attended'].copy()
+
+# Clean Year: Remove NaNs and convert to int
+df_attended = df_attended.dropna(subset=['Workshop Timing_Year'])
+df_attended['Workshop Timing_Year'] = df_attended['Workshop Timing_Year'].astype(int)
+
+# 2. Logic: Calculate months until graduation using Grad attributes
+# Use Grad_Year, Grad_Month and Workshop Timing components
+def calculate_months_to_grad(row):
+    try:
+        # Get graduation year and month
+        if pd.isna(row['Grad_Year']) or pd.isna(row['Grad_Month']):
+            return pd.NA
+        
+        grad_year = int(row['Grad_Year'])
+        
+        # Convert month name to number
+        month_map = {
+            'january': 1, 'february': 2, 'march': 3, 'april': 4,
+            'may': 5, 'june': 6, 'july': 7, 'august': 8,
+            'september': 9, 'october': 10, 'november': 11, 'december': 12
+        }
+        grad_month_str = str(row['Grad_Month']).lower()
+        grad_month = month_map.get(grad_month_str, pd.NA)
+        
+        if pd.isna(grad_month):
+            return pd.NA
+        
+        # Get workshop date from Workshop Timing components
+        if pd.isna(row['Workshop Timing_Year']) or pd.isna(row['Workshop Timing_Month']):
+            return pd.NA
+        
+        workshop_year = int(row['Workshop Timing_Year'])
+        workshop_month_str = str(row['Workshop Timing_Month']).lower()
+        workshop_month = month_map.get(workshop_month_str, pd.NA)
+        
+        if pd.isna(workshop_month):
+            return pd.NA
+        
+        # Calculate difference in months
+        months_diff = (grad_year - workshop_year) * 12 + (grad_month - workshop_month)
+        
+        return months_diff
+    except:
+        return pd.NA
+
+df_attended['Months_To_Grad'] = df_attended.apply(calculate_months_to_grad, axis=1)
+
+# Bin into 4-month periods
+def grad_quarter_bin(months):
+    if pd.isna(months): 
+        return 'Unknown'
+    if months < 0:
+        return 'Already Graduated'
+    elif months <= 4:
+        return '0-4 Months'
+    elif months <= 8:
+        return '5-8 Months'
+    elif months <= 12:
+        return '9-12 Months'
+    elif months <= 16:
+        return '13-16 Months'
+    elif months <= 20:
+        return '17-20 Months'
+    elif months <= 24:
+        return '21-24 Months'
+    else:
+        return '25+ Months'
+
+df_attended['Grad_Quarter'] = df_attended['Months_To_Grad'].apply(grad_quarter_bin)
+
+# 3. Stats
+kpi_result = {}
+figures_list = []
+
+# Define order for quarters (4-month periods)
+quarter_order = ['0-4 Months', '5-8 Months', '9-12 Months', '13-16 Months', '17-20 Months', '21-24 Months', '25+ Months', 'Already Graduated', 'Unknown']
+
+# 4. Yearly Pie Charts
+years = sorted(df_attended['Workshop Timing_Year'].unique())
+
+for year in years:
+    df_year = df_attended[df_attended['Workshop Timing_Year'] == year]
+    
+    if not df_year.empty:
+        year_quarter_counts = df_year['Grad_Quarter'].value_counts()
+        
+        # Filter to existing quarters in this year
+        year_quarter_counts = year_quarter_counts.reindex(
+            [q for q in quarter_order if q in year_quarter_counts.index],
+            fill_value=0
+        )
+        year_quarter_counts = year_quarter_counts[year_quarter_counts > 0]
+        
+        if not year_quarter_counts.empty:
+            try:
+                fig, ax = plt.subplots(figsize=(10, 6))
+                
+                # Color palette
+                cmap = plt.get_cmap('tab10')
+                colors = [cmap(i) for i in range(len(year_quarter_counts))]
+                
+                # Custom autopct function to hide % when < 1%
+                def autopct_format(pct):
+                    return f'{pct:.1f}%' if pct >= 1 else ''
+                
+                wedges, texts, autotexts = ax.pie(
+                    year_quarter_counts.values,
+                    labels=None,  # No labels on pie slices, use legend only
+                    autopct=autopct_format,
+                    startangle=90,
+                    colors=colors,
+                    pctdistance=0.85,
+                    explode=[0.05 if i == 0 else 0 for i in range(len(year_quarter_counts))]
+                )
+                
+                # Draw circle for donut style
+                centre_circle = plt.Circle((0,0),0.70,fc='white')
+                fig.gca().add_artist(centre_circle)
+                
+                ax.set_title(f'{int(year)}: Attendance by Time Until Graduation', fontsize=14, weight='bold')
+                ax.legend(
+                    year_quarter_counts.index,
+                    title="Time to Graduation",
+                    loc="center left",
+                    bbox_to_anchor=(1, 0, 0.5, 1)
+                )
+                ax.axis('equal')
+                plt.tight_layout()
+                
+                # Create table for this year
+                df_year_table = year_quarter_counts.reset_index(name='Count').rename(columns={'index': 'Grad_Quarter'})
+                df_year_table['Percentage'] = (df_year_table['Count'] / df_year_table['Count'].sum() * 100).map('{:.1f}%'.format)
+                
+                figures_list.append({
+                    'fig': fig,
+                    'title': f'{int(year)} Distribution',
+                    'table': df_year_table
+                })
+            except Exception as e:
+                pass
+
+# 5. Overall Pie Chart
+overall_quarter_counts = df_attended['Grad_Quarter'].value_counts()
+
+# Filter to existing quarters overall
+overall_quarter_counts = overall_quarter_counts.reindex(
+    [q for q in quarter_order if q in overall_quarter_counts.index],
+    fill_value=0
+)
+overall_quarter_counts = overall_quarter_counts[overall_quarter_counts > 0]
+
+if not overall_quarter_counts.empty:
+    try:
+        fig, ax = plt.subplots(figsize=(10, 6))
+        
+        # Same color palette
+        cmap = plt.get_cmap('tab10')
+        colors = [cmap(i) for i in range(len(overall_quarter_counts))]
+        
+        # Custom autopct function to hide % when < 1%
+        def autopct_format(pct):
+            return f'{pct:.1f}%' if pct >= 1 else ''
+        
+        wedges, texts, autotexts = ax.pie(
+            overall_quarter_counts.values,
+            labels=None,  # No labels on pie slices, use legend only
+            autopct=autopct_format,
+            startangle=90,
+            colors=colors,
+            pctdistance=0.85,
+            explode=[0.05 if i == 0 else 0 for i in range(len(overall_quarter_counts))]
+        )
+        
+        # Draw circle for donut style
+        centre_circle = plt.Circle((0,0),0.70,fc='white')
+        fig.gca().add_artist(centre_circle)
+        
+        ax.set_title('Overall: Attendance by Time Until Graduation', fontsize=14, weight='bold')
+        ax.legend(
+            overall_quarter_counts.index,
+            title="Time to Graduation",
+            loc="center left",
+            bbox_to_anchor=(1, 0, 0.5, 1)
+        )
+        ax.axis('equal')
+        plt.tight_layout()
+        
+        # Create overall table
+        df_overall_table = overall_quarter_counts.reset_index(name='Count').rename(columns={'index': 'Grad_Quarter'})
+        df_overall_table['Percentage'] = (df_overall_table['Count'] / df_overall_table['Count'].sum() * 100).map('{:.1f}%'.format)
+        
+        figures_list.append({
+            'fig': fig,
+            'title': 'Overall Distribution',
+            'table': df_overall_table
+        })
+    except Exception as e:
+        pass
+
+# 6. Summary Table - Cross-tabulation of quarters by year
+df_table = df_attended.groupby(['Grad_Quarter', 'Workshop Timing_Year']).size().unstack(fill_value=0)
+
+# Filter to existing quarters
+existing_quarters = [q for q in quarter_order if q in df_table.index]
+df_table = df_table.reindex(existing_quarters, fill_value=0)
+
+# Get sorted years
+years_in_table = sorted(df_table.columns)
+
+# Add total column
+df_table['Total'] = df_table.sum(axis=1)
+
+# Add % Changes between consecutive years (before resetting index)
+if len(years_in_table) >= 2:
+    for i in range(len(years_in_table) - 1):
+        y1, y2 = years_in_table[i], years_in_table[i+1]
+        col_name = f'% Change ({y1}->{y2})'
+        
+        df_table[col_name] = df_table.apply(
+            lambda row, start=y1, end=y2: (
+                f"{((row[end] - row[start]) / row[start]) * 100:+.1f}%" 
+                if row[start] != 0 
+                else ("New" if row[end] > 0 else "-")
+            ), 
+            axis=1
+        )
+
+# Reset index for display
+df_table = df_table.reset_index()
+df_table.columns.name = None
+"""
+
+# Q9 CODE
+code_q9 = """
+# 1. Filter & Setup
+# We need ALL records (Registered + Attended) to calculate attrition
+df_clean = df.copy()
+
+# 2. Validate required columns
+required_cols = ['Workshop Timing_Year', 'Workshop Timing_Month', 'Workshop Timing_DayNumber', 'Registered Date', 'Attendance Status', 'SIMID']
+missing_cols = [col for col in required_cols if col not in df_clean.columns]
+
+if missing_cols:
+    kpi_result = {'Status': f"Missing required columns: {', '.join(missing_cols)}"}
+    df_table = pd.DataFrame([{"Error": kpi_result['Status']}])
+    fig = None
+else:
+    # 3. Logic: Lead Days & Bins
+    # Reconstruct attended date from Workshop Timing components
+    # Filter out rows with missing timing components first
+    df_clean = df_clean.dropna(subset=['Workshop Timing_Year', 'Workshop Timing_Month', 'Workshop Timing_DayNumber', 'Registered Date'])
+    
+    if df_clean.empty:
+        kpi_result = {'Status': 'No records with complete timing and registration data'}
+        df_table = pd.DataFrame([{"Error": kpi_result['Status']}])
+        fig = None
+    else:
+        # Reconstruct attended date
+        # Convert month names to numbers first
+        month_to_num = {
+            'january': 1, 'february': 2, 'march': 3, 'april': 4,
+            'may': 5, 'june': 6, 'july': 7, 'august': 8,
+            'september': 9, 'october': 10, 'november': 11, 'december': 12
+        }
+        
+        # Create a numeric month column
+        df_clean['Month_Num'] = df_clean['Workshop Timing_Month'].astype(str).str.lower().map(month_to_num)
+        
+        # Filter out rows where month mapping failed
+        df_clean = df_clean[df_clean['Month_Num'].notna()]
+        
+        if df_clean.empty:
+            kpi_result = {'Status': 'Invalid month names in Workshop Timing_Month'}
+            df_table = pd.DataFrame([{"Error": kpi_result['Status'], "Debug": "Expected month names like 'January', 'February', etc."}])
+            fig = None
+        else:
+            # Now reconstruct date with numeric month
+            df_clean['Attended_Date_Reconstructed'] = pd.to_datetime(
+                df_clean[['Workshop Timing_Year', 'Month_Num', 'Workshop Timing_DayNumber']].rename(
+                    columns={'Workshop Timing_Year': 'year', 'Month_Num': 'month', 'Workshop Timing_DayNumber': 'day'}
+                ),
+                errors='coerce'
+            )
+            
+            # Filter out rows where date reconstruction failed
+            df_clean = df_clean[df_clean['Attended_Date_Reconstructed'].notna()]
+            
+            if df_clean.empty:
+                kpi_result = {'Status': 'Date reconstruction failed for all records'}
+                df_table = pd.DataFrame([{"Error": kpi_result['Status'], "Debug": "Check Workshop Timing_Year, Month, DayNumber formats"}])
+                fig = None
+            else:
+                df_clean['Lead_Days'] = (df_clean['Attended_Date_Reconstructed'] - df_clean['Registered Date']).dt.days
+                
+                def lead_bin(days):
+                    if pd.isna(days): return 'Unknown'
+                    if days <= 0: return 'Same Day'
+                    elif days <= 3: return 'Last Minute (1-3 Days)'
+                    elif days <= 7: return 'Standard (1 Week)'
+                    else: return 'Early Bird (>1 Week)'
+                
+                df_clean['Reg_Timing'] = df_clean['Lead_Days'].apply(lead_bin)
+            
+            # 4. Aggregation: Registered vs Attended per Bin
+            # Exclude Cancelled if distinct
+            df_active = df_clean[~df_clean['Attendance Status'].astype(str).str.lower().str.contains('cancel', na=False)].copy()
+            
+            if df_active.empty:
+                kpi_result = {'Status': 'No active (non-cancelled) records found'}
+                df_table = pd.DataFrame([{"Error": kpi_result['Status']}])
+                fig = None
+            else:
+                # Group by Timing Bin
+                # Count Total (Signups)
+                total_signups = df_active.groupby('Reg_Timing')['SIMID'].count()
+                
+                # Count Attended
+                attended_only = df_active[df_active['Attendance Status'].astype(str).str.lower() == 'attended']
+                attended_counts = attended_only.groupby('Reg_Timing')['SIMID'].count()
+                
+                # Combine
+                df_attrition = pd.DataFrame({
+                    'Total Registered': total_signups,
+                    'Actual Attendance': attended_counts
+                }).fillna(0)
+                
+                # Enforce Order
+                desired_order = ['Same Day', 'Last Minute (1-3 Days)', 'Standard (1 Week)', 'Early Bird (>1 Week)']
+                existing_order = [x for x in desired_order if x in df_attrition.index]
+                df_attrition = df_attrition.reindex(existing_order, fill_value=0)
+                
+                # Calculate Attrition Rate
+                df_attrition['Attrition Rate'] = ((df_attrition['Total Registered'] - df_attrition['Actual Attendance']) / df_attrition['Total Registered']) * 100
+                df_attrition['Attendance Rate'] = (df_attrition['Actual Attendance'] / df_attrition['Total Registered']) * 100
+                
+                # 5. Graph: Grouped Bar Chart
+                if not df_attrition.empty and df_attrition['Total Registered'].sum() > 0:
+                    fig, ax = plt.subplots(figsize=(10, 6))
+                    x = np.arange(len(df_attrition))
+                    width = 0.35
+                    
+                    # Bars
+                    rects1 = ax.bar(x - width/2, df_attrition['Total Registered'], width, label='Total Registered', color='#a8dadc')
+                    rects2 = ax.bar(x + width/2, df_attrition['Actual Attendance'], width, label='Actual Attendance', color='#457b9d')
+                    
+                    ax.set_title('Attendance Attrition by Registration Timing', fontsize=14, weight='bold')
+                    ax.set_ylabel('Number of Students')
+                    ax.set_xlabel('Registration Timing')
+                    ax.set_xticks(x)
+                    ax.set_xticklabels(df_attrition.index)
+                    ax.legend()
+                    
+                    # Add labels
+                    ax.bar_label(rects1, padding=3)
+                    ax.bar_label(rects2, padding=3)
+                    
+                    plt.tight_layout()
+                    
+                    # 6. Table
+                    # Format percentages
+                    df_table = df_attrition.copy()
+                    df_table['Attrition Rate'] = df_table['Attrition Rate'].map('{:.1f}%'.format)
+                    df_table['Attendance Rate'] = df_table['Attendance Rate'].map('{:.1f}%'.format)
+                    df_table.index.name = 'Registration Timing'
+                    df_table = df_table.reset_index()
+                
+                    kpi_result = {
+                        'Avg Attrition Rate': f"{df_attrition['Attrition Rate'].mean():.1f}%"
+                    }
+                else:
+                    kpi_result = {'Status': "No valid data for attrition analysis."}
+                    df_table = pd.DataFrame([{"Error": "No registrations found"}])
+                    fig = None
+"""
+
+# Q10 CODE
+code_q10 = """
+# Version 3.0 - Individual heatmaps per sub-category with composition tables
+# 1. Filter
+df_attended = df[df['Attendance Status'].astype(str).str.lower() == 'attended'].copy()
+
+# 2. Logic: Analyze each Sub-Category separately
+figures_list = []
+kpi_result = {}
+
+if 'Sub-Category' in df_attended.columns and 'Program Classification' in df_attended.columns:
+    # Get unique sub-categories, sorted by total attendance
+    subcat_totals = df_attended['Sub-Category'].value_counts()
+    
+    for subcat in subcat_totals.index:
+        # Filter data for this sub-category
+        df_subcat = df_attended[df_attended['Sub-Category'] == subcat]
+        
+        if not df_subcat.empty:
+            # Count by program classification
+            prog_counts = df_subcat['Program Classification'].value_counts()
+            total_students = len(df_subcat)
+            
+            # Create composition table
+            table_data = []
+            for prog, count in prog_counts.items():
+                pct = (count / total_students * 100)
+                table_data.append({
+                    'Program Classification': prog.title() if isinstance(prog, str) else prog,
+                    'Count': int(count),
+                    'Percentage': f'{pct:.1f}%'
+                })
+            
+            df_table = pd.DataFrame(table_data)
+            df_table = df_table.sort_values('Count', ascending=False)
+            
+            # Create pie chart for this sub-category
+            try:
+                fig, ax = plt.subplots(figsize=(10, 6))
+                
+                # Create pie chart
+                # Use Set3 colormap for qualitative distinction
+                cmap = plt.get_cmap('Set3')
+                colors = [cmap(i) for i in range(len(prog_counts))]
+                
+                # Custom autopct function to hide % when < 1%
+                def autopct_format(pct):
+                    return f'{pct:.1f}%' if pct >= 1 else ''
+                
+                wedges, texts, autotexts = ax.pie(
+                    prog_counts.values,
+                    labels=None, # LEGEND ONLY
+                    autopct=autopct_format,
+                    startangle=90,
+                    colors=colors,
+                    pctdistance=0.85,
+                    explode=[0.05 if i == 0 else 0 for i in range(len(prog_counts))] # Explode the largest slice slightly
+                )
+                
+                # Draw circle for donut chart style (optional, looks modern)
+                centre_circle = plt.Circle((0,0),0.70,fc='white')
+                fig.gca().add_artist(centre_circle)
+                
+                
+                # Title with sub-category name
+                subcat_title = subcat.title() if isinstance(subcat, str) else subcat
+                ax.set_title(f'{subcat_title}: Student Composition by Academic Major', 
+                           fontsize=14, weight='bold')
+                
+                # Legend instead of labels
+                ax.legend(
+                    [p.title() if isinstance(p, str) else p for p in prog_counts.index],
+                    title="Program",
+                    loc="center left",
+                    bbox_to_anchor=(1, 0, 0.5, 1)
+                )
+
+                # Equal aspect ratio ensures that pie is drawn as a circle
+                ax.axis('equal')  
+                plt.tight_layout()
+                
+                # Add to figures list with table
+                figures_list.append({
+                    'fig': fig,
+                    'title': f'{subcat_title}',
+                    'table': df_table
+                })
+                
+            except Exception as e:
+                pass
+    
+    # Set summary stats
+    kpi_result = {
+        'Sub-Categories Analyzed': len(subcat_totals)
+    }
+
+else:
+    kpi_result['Status'] = "Required columns 'Sub-Category' or 'Program Classification' missing."
+
+# Note: figures_list will be used by the rendering system
+# No need to define fig or df_table separately
+"""
+
+# Store original code blocks
+_code_q8_orig = code_q8
+_code_q9_orig = code_q9
+_code_q10_orig = code_q10
+
+# REORDER MAPPING
+# New Q8 = Old Q10 (Sub-Category x Major)
+code_q8 = _code_q10_orig
+
+# New Q9 = Old Q8 (Graduation Proximity)
+code_q9 = _code_q8_orig
+
+# New Q10 = Old Q9 (Registration Timing)
+code_q10 = _code_q9_orig
+
+# ==============================================================================
+# RENDER ALL BLOCKS
+# ==============================================================================
+
+# ==============================================================================
+# 3-PAGE WORKFLOW & PPT GENERATION
+# ==============================================================================
+
+# --- HELPER: EXECUTE ANALYSIS CODE (Decoupled from Display) ---
+def execute_analysis_code(q_id, df_to_use, code_to_run):
+    """
+    Executes the analysis code and returns the results dictionary.
+    Does NOT allow st. calls (sandboxed).
+    """
+    local_vars = {
+        'df': df_to_use, 
+        'pd': pd, 
+        'plt': plt, 
+        'sns': sns,
+        'np': __import__('numpy'),
+        'kpi_result': {},
+        'fig': None,
+        'df_table': None,
+        'figures_list': []
+    }
+    
+    try:
+        exec(code_to_run, globals(), local_vars)
+        return {
+            'success': True,
+            'kpi_result': local_vars.get('kpi_result', {}),
+            'figures_list': local_vars.get('figures_list', []),
+            'fig': local_vars.get('fig'),
+            'df_table': local_vars.get('df_table'),
+            'error': None
+        }
+    except Exception as e:
+        return {
+            'success': False,
+            'error': str(e)
+        }
+
+# --- HELPER: GENERATE POWERPOINT ---
+def generate_ppt(df_global, exclude_uni=False):
+    """
+    Generates a PowerPoint presentation with all 10 analysis questions.
+    
+    Args:
+        df_global: The global dataframe with all data
+        exclude_uni: If True, exclude university-specific events from analysis
+    
+    Returns a BytesIO object containing the PPTX file.
+    """
+    try:
+        from pptx import Presentation
+        from pptx.util import Inches, Pt
+    except ImportError:
+        st.error("python-pptx library not found. Please install it.")
+        return None
+
+    prs = Presentation()
+    
+    # 1. Title Slide
+    title_slide_layout = prs.slide_layouts[0]
+    slide = prs.slides.add_slide(title_slide_layout)
+    title = slide.shapes.title
+    subtitle = slide.placeholders[1]
+    title.text = "Workshop Attendance Analysis"
+    subtitle.text = f"Generated on {pd.Timestamp.now().strftime('%Y-%m-%d')}"
+
+    # Codes Map
+    codes_map = {
+        1: code_q1, 2: code_q2, 3: code_q3, 4: code_q4, 5: code_q5,
+        6: code_q6, 7: code_q7, 8: code_q8, 9: code_q9, 10: code_q10
+    }
+    
+    titles = [
+        "Overall Attendance Overview",
+        "Unique Participant Count",
+        "Most Popular Days & Time Slots",
+        "Attendance by University",
+        "Workshop Attendance by Sub-Category",
+        "Attendance by Student Type (Local vs International)",
+        "Workshop Attendance by Sub-Category & Student Type",
+        "Workshop Attendance by Sub-Category & Academic Major",
+        "Attendance by Expected Graduation Period",
+        "Attendance Attrition by Registration Timing"
+    ]
+
+    for q_id in range(1, 11):
+        q_title = titles[q_id-1]
+        code = st.session_state.get(f"edited_code_{q_id}", codes_map[q_id])
+        
+        # Execute Analysis with exclude_uni setting
+        result = execute_analysis_code(q_id, df_global, code, exclude_uni=exclude_uni)
+        
+        # Add Question Title Slide (Section Divider)
+        title_slide = prs.slides.add_slide(prs.slide_layouts[5])  # Blank layout
+        
+        # Add title text box
+        left = Inches(1)
+        top = Inches(3)
+        width = Inches(8)
+        height = Inches(1.5)
+        
+        txBox = title_slide.shapes.add_textbox(left, top, width, height)
+        tf = txBox.text_frame
+        tf.text = f"Q{q_id}: {q_title}"
+        
+        # Format the title
+        p = tf.paragraphs[0]
+        p.alignment = 1  # Center alignment
+        p.font.size = Pt(32)
+        p.font.bold = True
+        p.font.color.rgb = RGBColor(0, 51, 102)  # Dark blue
+        
+        if not result['success']:
+            # Error Slide
+            slide = prs.slides.add_slide(prs.slide_layouts[1]) # Title and Content
+            slide.shapes.title.text = f"Q{q_id}: {q_title}"
+            slide.placeholders[1].text = f"Error generating analysis: {result['error']}"
+            continue
+
+        items_to_plot = []
+        
+        # Collect all items (Single or Multi)
+        if result['figures_list']:
+            for item in result['figures_list']:
+                items_to_plot.append({
+                    'title': item.get('title', f"Q{q_id} Analysis"),
+                    'fig': item.get('fig'),
+                    'table': item.get('table')
+                })
+        elif result['fig'] or (result['df_table'] is not None and not result['df_table'].empty):
+            items_to_plot.append({
+                'title': f"Q{q_id}: {q_title}",
+                'fig': result['fig'],
+                'table': result['df_table']
+            })
+
+        if not items_to_plot:
+            slide = prs.slides.add_slide(prs.slide_layouts[1])
+            slide.shapes.title.text = f"Q{q_id}: {q_title}"
+            slide.placeholders[1].text = "No data available for this analysis."
+            continue
+
+        # Create Slides for each item
+        for item in items_to_plot:
+            slide = prs.slides.add_slide(prs.slide_layouts[6]) # Blank layout
+            
+            # Add Title
+            txBox = slide.shapes.add_textbox(Inches(0.5), Inches(0.2), Inches(9), Inches(1))
+            tf = txBox.text_frame
+            p = tf.paragraphs[0]
+            p.text = item['title']
+            p.font.size = Pt(24)
+            p.font.bold = True
+
+            # Add Image (Left or Center)
+            if item['fig']:
+                image_stream = io.BytesIO()
+                try:
+                    item['fig'].savefig(image_stream, format='png', dpi=150, bbox_inches='tight')
+                    image_stream.seek(0)
+                    slide.shapes.add_picture(image_stream, Inches(0.5), Inches(1.5), height=Inches(4.5))
+                except Exception as e:
+                    pass
+
+            # Add Table (Right) - Simplified text version for now as pptx tables are complex
+            # Ideally we would iterate and build a real pptx table
+            if item['table'] is not None and not item['table'].empty:
+                df = item['table']
+                # Limit rows to prevent overflow
+                df_show = df.head(15) 
+                
+                rows, cols = df_show.shape
+                # Position table to the right of the image
+                left = Inches(5.5) if item['fig'] else Inches(1)
+                top = Inches(1.5)
+                width = Inches(4.0) if item['fig'] else Inches(8.0)
+                height = Inches(0.8) # minimal height
+                
+                shape = slide.shapes.add_table(rows+1, cols, left, top, width, height).table
+                
+                # Function to set cell borders
+                from pptx.dml.color import RGBColor
+                from pptx.oxml.xmlchemy import OxmlElement
+
+                def SubElement(parent, tagname, **kwargs):
+                    element = OxmlElement(tagname)
+                    element.attrib.update(kwargs)
+                    parent.append(element)
+                    return element
+
+                def _set_cell_border(cell, border_color="000000", border_width='12700'):
+                    tc = cell._tc
+                    tcPr = tc.get_or_add_tcPr()
+                    for lines in ['a:lnL','a:lnR','a:lnT','a:lnB']:
+                        ln = SubElement(tcPr, lines, w=border_width, cap='flat', cmpd='sng', algn='ctr')
+                        solidFill = SubElement(ln, 'a:solidFill')
+                        srgbClr = SubElement(solidFill, 'a:srgbClr', val=border_color)
+                        prstDash = SubElement(ln, 'a:prstDash', val='solid')
+                        round_ = SubElement(ln, 'a:round')
+                        headEnd = SubElement(ln, 'a:headEnd', type='none', w='med', len='med')
+                        tailEnd = SubElement(ln, 'a:tailEnd', type='none', w='med', len='med')
+
+                # Column headers
+                for i, col_name in enumerate(df_show.columns):
+                    cell = shape.cell(0, i)
+                    cell.text = str(col_name)
+                    cell.fill.background() # No fill
+                    _set_cell_border(cell)
+                    # Bold headers
+                    cell.text_frame.paragraphs[0].font.bold = True
+                    cell.text_frame.paragraphs[0].font.size = Pt(10)
+                
+                # Rows
+                for r in range(rows):
+                    for c in range(cols):
+                        cell = shape.cell(r+1, c)
+                        cell.text = str(df_show.iloc[r, c])
+                        cell.fill.background() # No fill
+                        _set_cell_border(cell)
+                        cell.text_frame.paragraphs[0].font.size = Pt(10)
+                
+                # Add note if truncated
+                if len(df) > 15:
+                    txBox = slide.shapes.add_textbox(left, top + Inches(4.5), width, Inches(0.5))
+                    txBox.text_frame.text = f"(Showing top 15 of {len(df)} rows)"
+
+    out = io.BytesIO()
+    prs.save(out)
+    out.seek(0)
+    return out
+
+
+# ==============================================================================
+# MAIN APP LOGIC
+# ==============================================================================
+
+def main():
+    # 1. Page Config
+    # st.set_page_config ... (already set globally)
+    
+    # --- GLOBAL HEADER ---
+    # 2. Session State for Navigation
+    if 'current_page' not in st.session_state:
+        st.session_state['current_page'] = 1
+    
+    # Helper to switch pages
+    def go_to_page(page_num):
+        st.session_state['current_page'] = page_num
+        st.rerun()
+
+    # --- HEADER & NAVIGATION ---
+    # Layout: Left Button | Title | Right Button
+    col_nav_1, col_nav_2, col_nav_3 = st.columns([1, 6, 1])
+
+    with col_nav_2:
+        st.markdown("<h1 style='text-align: center; margin-bottom: 0px;'>Career Development Analysis Tool</h1>", unsafe_allow_html=True)
+        if st.session_state.get('current_page', 1) == 1:
+             st.markdown("<p style='text-align: center; margin-top: 0px;'>Upload attendance logs and taxonomy to generate the dashboard</p>", unsafe_allow_html=True)
+
+    with col_nav_1:
+        if st.session_state['current_page'] == 2:
+            if st.button("⬅ Data Prep", key="nav_back_2", use_container_width=True):
+                go_to_page(1)
+        elif st.session_state['current_page'] == 3:
+             if st.button("⬅ Analysis", key="nav_back_3", use_container_width=True):
+                go_to_page(2)
+
+    with col_nav_3:
+        if st.session_state['current_page'] == 2:
+             if st.button("Report ➡", key="nav_next_2", use_container_width=True):
+                go_to_page(3)
+
+    # ==============================================================================
+    # PAGE 1: DATA PREPARATION
+    # ==============================================================================
+    if st.session_state['current_page'] == 1:
+        # Title removed as requested
+        pass
+        
+        run_data_ingestion()
+
+
+    # ==============================================================================
+    # PAGE 2: ANALYSIS (Q1-Q10)
+    # ==============================================================================
+    elif st.session_state['current_page'] == 2:
+        
+        titles = [
+            "Overall Attendance Overview",
+            "Unique Participant Count",
+            "Most Popular Days & Time Slots",
+            "Attendance by University",
+            "Workshop Attendance by Sub-Category",
+            "Attendance by Student Type (Local vs International)",
+            "Workshop Attendance by Sub-Category & Student Type",
+            "Workshop Attendance by Sub-Category & Academic Major",
+            "Attendance by Expected Graduation Period",
+            "Attendance Attrition by Registration Timing"
+        ]
+        
+        # Code Map
+        default_codes = [code_q1, code_q2, code_q3, code_q4, code_q5, code_q6, code_q7, code_q8, code_q9, code_q10]
+        
+        # Render all questions
+        for i in range(10):
+            q_id = i + 1
+            render_sandbox(q_id, titles[i], default_codes[i])
+            
+
+    # ==============================================================================
+    # PAGE 3: REPORT GENERATION
+    # ==============================================================================
+    elif st.session_state['current_page'] == 3:
+        # Title removed as requested
+        st.markdown("<h5 style='text-align: center;'>Generate a PowerPoint presentation summarizing the analysis from all 10 questions.</h5>", unsafe_allow_html=True)
+        
+        # Exclude Uni Events Option
+        st.markdown("")
+        col_opt1, col_opt2, col_opt3 = st.columns([1, 2, 1])
+        with col_opt2:
+            exclude_uni_ppt = st.checkbox(
+                "🎓 Exclude University-Specific Events",
+                value=False,
+                key="exclude_uni_ppt",
+                help="Exclude workshops designed specifically for particular universities from the PowerPoint report"
+            )
+        
+        st.markdown("")
+        _, col_center, _ = st.columns([1, 1, 1])
+        
+        with col_center:
+            if st.button("Generate PowerPoint Presentation", type="primary", use_container_width=True):
+                with st.spinner("Generating slides..."):
+                    # Generate PPT with exclude uni events setting
+                    ppt_io = generate_ppt(st.session_state['data'], exclude_uni=exclude_uni_ppt)
+                    
+                    if ppt_io:
+                        st.success("✅ Presentation Generated!")
+                        
+                        # Preview (using a placeholder concept or just download)
+                        st.info("Click below to download your report.")
+                        
+                        st.download_button(
+                            label="📥 Download PowerPoint (.pptx)",
+                            data=ppt_io,
+                            file_name=f"Workshop_Analysis_Report_{pd.Timestamp.now().strftime('%Y%m%d_%H%M')}.pptx",
+                            mime="application/vnd.openxmlformats-officedocument.presentationml.presentation",
+                            use_container_width=True
+                        )
+
+
+
+
+    # ==============================================================================
+    # FOOTER
+    # ==============================================================================
+    st.markdown("---")
+    st.markdown(
+        """
+        <div style='text-align: center; color: #666; font-size: 12px;'>
+            @Copyright 2025 Leaners Advisory Career Connect, SIM Created by Lee Ming Xuan
+        </div>
+        """,
+        unsafe_allow_html=True
+    )
+
+if __name__ == "__main__":
+    main()
