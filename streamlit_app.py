@@ -1701,16 +1701,37 @@ else:
                 
                 overall_data = []
                 for rank, ((day, hour), count) in enumerate(overall_slots.items(), 1):
+                    # Drill down: Get Top 10 Workshops for this slot
+                    slot_mask = (df_attended['Workshop Timing_Day'] == day) & (df_attended['Hour'] == hour)
+                    df_slot = df_attended[slot_mask]
+                    
+                    # Group by Event Name
+                    # Count Attendance (size) and Runs (unique Attended Date)
+                    ws_stats = df_slot.groupby('Event Name').agg(
+                        Attendance=('SIMID', 'size'),
+                        Runs=('Attended Date', 'nunique')
+                    ).sort_values('Attendance', ascending=False).head(10)
+                    
+                    # Format details
+                    details_list = []
+                    for idx, (event, row) in enumerate(ws_stats.iterrows(), 1):
+                        run_str = f", {row['Runs']} runs" if row['Runs'] > 1 else ", 1 run"
+                        details_list.append(f"{idx}. {event} ({row['Attendance']} pax{run_str})")
+                    
+                    # Join with newlines
+                    details_str = "\n".join(details_list)
+
                     overall_data.append({
                         'Rank': rank,
                         'Day': day,
                         'Time Slot': f"{int(hour):02d}:00",
-                        'Attendance Count': count
+                        'Attendance Count': count,
+                        'Top 10 Workshops': details_str
                     })
                 
                 df_overall_table = pd.DataFrame(overall_data)
                 
-                # Overall Heatmap
+                # Overall Heatmap (Previous logic)
                 pivot_overall = df_attended.pivot_table(
                     index='Day_Ordered', 
                     columns='Hour', 
@@ -1748,25 +1769,35 @@ else:
                         year_slots = df_year.groupby(['Workshop Timing_Day', 'Hour']).size().sort_values(ascending=False).head(3)
                         
                         for rank, ((day, hour), count) in enumerate(year_slots.items(), 1):
+                            # Drill down for Year
+                            slot_mask = (df_year['Workshop Timing_Day'] == day) & (df_year['Hour'] == hour)
+                            df_slot = df_year[slot_mask]
+                            
+                            ws_stats = df_slot.groupby('Event Name').agg(
+                                Attendance=('SIMID', 'size'),
+                                Runs=('Attended Date', 'nunique')
+                            ).sort_values('Attendance', ascending=False).head(10)
+                            
+                            details_list = []
+                            for idx, (event, row) in enumerate(ws_stats.iterrows(), 1):
+                                run_str = f", {row['Runs']} runs" if row['Runs'] > 1 else ", 1 run"
+                                details_list.append(f"{idx}. {event} ({row['Attendance']} pax{run_str})")
+                            
+                            details_str = "\n".join(details_list)
+
                             yearly_data.append({
                                 'Year': int(year),
                                 'Rank': rank,
                                 'Day': day,
                                 'Time Slot': f"{int(hour):02d}:00",
-                                'Attendance Count': count
+                                'Attendance Count': count,
+                                'Top 10 Workshops': details_str
                             })
                         
                         # Year-specific table
-                        df_year_table = pd.DataFrame([
-                            {
-                                'Rank': rank,
-                                'Day': day,
-                                'Time Slot': f"{int(hour):02d}:00",
-                                'Attendance Count': count
-                            }
-                            for rank, ((day, hour), count) in enumerate(year_slots.items(), 1)
-                        ])
-                        
+                        # For yearly specific table in figures_list, we reuse the same structure
+                        df_year_table = pd.DataFrame(yearly_data[-len(year_slots):]) # Get last N added
+
                         # Yearly Heatmap
                         pivot_year = df_year.pivot_table(
                             index='Day_Ordered',
@@ -1797,7 +1828,7 @@ else:
                 df_yearly_all = pd.DataFrame(yearly_data)
                 
                 # Add separator
-                separator = pd.DataFrame([{'Year': '---', 'Rank': '---', 'Day': '---', 'Time Slot': '---', 'Attendance Count': '---'}])
+                separator = pd.DataFrame([{'Year': '---', 'Rank': '---', 'Day': '---', 'Time Slot': '---', 'Attendance Count': '---', 'Top 10 Workshops': '---'}])
                 
                 # Overall section with Year column
                 df_overall_display = df_overall_table.copy()
