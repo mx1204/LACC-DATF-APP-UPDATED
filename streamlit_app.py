@@ -2956,8 +2956,6 @@ kpi_result = {
 }
 """
 
-"""
-
 
 # Q12 CODE
 code_q12 = """
@@ -3038,8 +3036,6 @@ else:
 kpi_result['Total Unique Students'] = df_attended['SIMID'].nunique()
 if not uni_unique_counts.empty:
     kpi_result['Top University'] = f"{uni_unique_counts.index[0]} ({uni_unique_counts.iloc[0]})"
-"""
-
 """
 
 
