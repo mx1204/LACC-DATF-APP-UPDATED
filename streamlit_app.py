@@ -552,7 +552,8 @@ def run_data_ingestion():
                     'SIMID': ['simid', 'student id', 'id', 'sim id', 'admin number'],
                     'University Program': ['university program', 'university', 'institution', 'partner university', 'school'],
                     'Program': ['program', 'major', 'course', 'degree', 'study'],
-                    'Original_Time': ['time', 'attended time', 'attended_time', 'start time', 'check in time'] # Keep original time separate
+                    'Original_Time': ['time', 'attended time', 'attended_time', 'start time', 'check in time'], # Keep original time separate
+                    'Student Name': ['student name', 'name', 'full name', 'participant name', 'attendee name']
                 }
                 
                 # Ensure standard columns exist for analysis code
@@ -592,9 +593,9 @@ def run_data_ingestion():
                     st.warning("⚠️ 'Attendance Status' column not found. Assuming all records are 'Attended'.")
 
                 # Ensure required columns exist
-                for col in ['Attended Date', 'Registered Date', 'Expected Grad Term']:
+                for col in ['Attended Date', 'Registered Date', 'Expected Grad Term', 'Student Name']:
                     if col not in merged_df.columns:
-                        merged_df[col] = pd.NaT
+                        merged_df[col] = pd.NA
 
                 if 'Time' not in merged_df.columns:
                     merged_df['Time'] = None
@@ -2818,6 +2819,197 @@ else:
 """
 
 
+
+# Q11 CODE
+code_q11 = """
+# 1. Setup
+figures_list = []
+kpi_result = {}
+
+# We need ALL records
+df_analysis = df.copy()
+
+# 2. Logic: Attrition Count & Rate
+
+# Clean Year
+df_analysis = df_analysis.dropna(subset=['Workshop Timing_Year'])
+df_analysis['Workshop Timing_Year'] = df_analysis['Workshop Timing_Year'].astype(int)
+
+# Define Status: Registered = All, Attended = Valid Attendance, Attrition (Absent) = Registered - Attended
+# In this dataset, we can define 'Attended' as 'Attendance Status' == 'Attended'
+# 'Absent' (Attrition) is everyone else.
+
+df_analysis['Is_Attended'] = df_analysis['Attendance Status'].astype(str).str.lower() == 'attended'
+
+# Group by Year
+# Count Total (Registered)
+yearly_registered = df_analysis.groupby('Workshop Timing_Year').size()
+# Count Attended
+yearly_attended = df_analysis[df_analysis['Is_Attended']].groupby('Workshop Timing_Year').size()
+# Calculate Attrition (Registered - Attended)
+# Use reindex to ensure all years are present, fillna 0
+years = sorted(yearly_registered.index.unique())
+# Align series
+yearly_registered = yearly_registered.reindex(years, fill_value=0)
+yearly_attended = yearly_attended.reindex(years, fill_value=0)
+
+yearly_attrition_count = yearly_registered - yearly_attended
+yearly_attrition_rate = (yearly_attrition_count / yearly_registered * 100).fillna(0)
+
+# 3. Create DataFrame for Table
+df_table = pd.DataFrame({
+    'Year': years,
+    'Registered': yearly_registered.values,
+    'Attended': yearly_attended.values,
+    'Attrition Count': yearly_attrition_count.values,
+    'Attrition Rate': yearly_attrition_rate.values
+})
+
+# Format Rate
+df_table['Attrition Rate'] = df_table['Attrition Rate'].map('{:.1f}%'.format)
+
+# Calculate % Change in Attrition Count (Year-over-Year)
+# Formula: ((Current - Previous) / Previous) * 100
+# We'll use a shifted column
+attrition_counts = df_table['Attrition Count']
+attrition_counts_shifted = attrition_counts.shift(1)
+df_table['Count % Change'] = ((attrition_counts - attrition_counts_shifted) / attrition_counts_shifted * 100)
+
+# Format % Change
+def fmt_change(val, prev):
+    if pd.isna(val) or pd.isna(prev) or prev == 0:
+        return "-"
+    return f"{val:+.1f}%"
+
+# Create formatted column
+df_table['Count % Change'] = [fmt_change(c, p) for c, p in zip(df_table['Count % Change'], attrition_counts_shifted)]
+
+# 4. Visualization: Line Graph of Attrition Count per Year
+if not df_table.empty:
+    fig, ax = plt.subplots(figsize=(10, 6))
+    
+    # Plot Line
+    ax.plot(df_table['Year'], df_table['Attrition Count'], marker='o', linewidth=2, markersize=8, color='#e74c3c', label='Attrition Count')
+    
+    # Add labels
+    for i, txt in enumerate(df_table['Attrition Count']):
+        ax.annotate(f"{int(txt)}", 
+                    (df_table['Year'][i], df_table['Attrition Count'][i]),
+                    textcoords="offset points", 
+                    xytext=(0,10), 
+                    ha='center',
+                    fontweight='bold')
+
+    ax.set_title('Overall Attrition Count per Year', fontsize=14, weight='bold')
+    ax.set_ylabel('Attrition Count', fontsize=12)
+    ax.set_xlabel('Year', fontsize=12)
+    ax.set_xticks(df_table['Year']) # Force integer ticks
+    ax.grid(True, alpha=0.3, linestyle='--')
+    ax.legend()
+    
+    plt.tight_layout()
+else:
+    fig = None
+    kpi_result['Status'] = 'No data available for attrition analysis'
+
+# 5. KPI Stats
+total_registered = yearly_registered.sum()
+total_attended = yearly_attended.sum()
+total_attrition = total_registered - total_attended
+overall_attrition_rate = (total_attrition / total_registered * 100) if total_registered > 0 else 0
+
+kpi_result = {
+    'Total Registered': total_registered,
+    'Total Attrition': total_attrition,
+    'Overall Attrition Rate': f"{overall_attrition_rate:.1f}%"
+}
+"""
+
+"""
+
+
+# Q12 CODE
+code_q12 = """
+# 1. Setup
+figures_list = []
+kpi_result = {}
+
+# 2. Logic: Unique Students & Top List per University
+# Filter Attended
+df_attended = df[df['Attendance Status'].astype(str).str.lower() == 'attended'].copy()
+
+# Clean University
+df_attended['Uni_Clean'] = df_attended['University Program'].astype(str).apply(lambda x: x.split(',')[0]).str.title()
+
+# Clean Name
+if 'Student Name' not in df.columns:
+    df_attended['Display_Name'] = df_attended['SIMID']
+else:
+    df_attended['Display_Name'] = df_attended['Student Name'].fillna(df_attended['SIMID'])
+
+# Group by University - Unique Count of SIMID
+uni_unique_counts = df_attended.groupby('Uni_Clean')['SIMID'].nunique().sort_values(ascending=False)
+
+# Top 10 Students per University
+top_students_data = []
+
+# Iterate over each university present
+for uni in uni_unique_counts.index:
+    # Filter for this uni
+    df_uni = df_attended[df_attended['Uni_Clean'] == uni]
+    
+    # Count attendance per student
+    student_counts = df_uni['Display_Name'].value_counts()
+    
+    # Get Top 10
+    top_10 = student_counts.head(10)
+    
+    # Format list: "Name (Count)"
+    top_list_str = ", ".join([f"{name} ({count})" for name, count in top_10.items()])
+    
+    top_students_data.append({
+        'University': uni,
+        'Unique Students': uni_unique_counts[uni],
+        'Top 10 High Attendance Students': top_list_str
+    })
+
+df_table = pd.DataFrame(top_students_data)
+
+# 3. Visualization: Bar Count of Unique Students
+if not uni_unique_counts.empty:
+    fig, ax = plt.subplots(figsize=(12, 8))
+    
+    # Plot
+    top_n_plot = uni_unique_counts.head(15) # Show top 15 for plotting clarity if many
+    
+    sns.barplot(x=top_n_plot.values, y=top_n_plot.index, palette='viridis', ax=ax)
+    
+    ax.set_title('Top Universities by Unique Student Participation', fontsize=14, weight='bold')
+    ax.set_xlabel('Unique Student Count')
+    ax.set_ylabel('University')
+    
+    # Add numbers
+    for i, v in enumerate(top_n_plot.values):
+        ax.text(v + 0.1, i, str(v), color='black', va='center', fontweight='bold')
+        
+    plt.tight_layout()
+    
+    figures_list.append({
+        'fig': fig,
+        'title': 'Unique Participants by University',
+        'table': df_table
+    })
+else:
+    kpi_result['Status'] = 'No attendance data found.'
+    fig = None
+
+# 4. KPI Stats
+kpi_result['Total Unique Students'] = df_attended['SIMID'].nunique()
+if not uni_unique_counts.empty:
+    kpi_result['Top University'] = f"{uni_unique_counts.index[0]} ({uni_unique_counts.iloc[0]})"
+"""
+
+
 # ==============================================================================
 # RENDER ALL BLOCKS
 # ==============================================================================
@@ -2907,7 +3099,8 @@ def generate_ppt(df_global, exclude_uni=False):
     # Codes Map
     codes_map = {
         1: code_q1, 2: code_q2, 3: code_q3, 4: code_q4, 5: code_q5,
-        6: code_q6, 7: code_q7, 8: code_q8, 9: code_q9, 10: code_q10
+        6: code_q6, 7: code_q7, 8: code_q8, 9: code_q9, 10: code_q10,
+        11: code_q11, 12: code_q12
     }
     
     titles = [
@@ -2920,10 +3113,13 @@ def generate_ppt(df_global, exclude_uni=False):
         "Workshop Attendance by Sub-Category & Student Type",
         "Workshop Attendance by Sub-Category & Academic Major",
         "Attendance by Expected Graduation Period",
-        "Attendance Attrition by Registration Timing"
+        "Registered vs Attended by Registration Timing",
+        "Attendance Attrition by Registration Timing",
+        "Overall Attrition Rate",
+        "Unique Counts & Top Students by University"
     ]
 
-    for q_id in range(1, 11):
+    for q_id in range(1, 13):
         q_title = titles[q_id-1]
         code = st.session_state.get(f"edited_code_{q_id}", codes_map[q_id])
         
@@ -3136,14 +3332,16 @@ def main():
             "Workshop Attendance by Sub-Category & Student Type",
             "Workshop Attendance by Sub-Category & Academic Major",
             "Attendance by Expected Graduation Period",
-            "Registered vs Attended by Registration Timing"
+            "Registered vs Attended by Registration Timing",
+            "Overall Attrition Rate",
+            "Unique Counts & Top Students by University"
         ]
         
         # Code Map
-        default_codes = [code_q1, code_q2, code_q3, code_q4, code_q5, code_q6, code_q7, code_q8, code_q9, code_q10]
+        default_codes = [code_q1, code_q2, code_q3, code_q4, code_q5, code_q6, code_q7, code_q8, code_q9, code_q10, code_q11, code_q12]
         
         # Render all questions
-        for i in range(10):
+        for i in range(12):
             q_id = i + 1
             render_sandbox(q_id, titles[i], default_codes[i])
             
