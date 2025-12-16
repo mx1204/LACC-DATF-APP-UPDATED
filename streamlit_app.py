@@ -3040,6 +3040,122 @@ if not uni_unique_counts.empty:
     kpi_result['Top University'] = f"{uni_unique_counts.index[0]} ({uni_unique_counts.iloc[0]})"
 """
 
+"""
+
+
+# Q13 CODE
+code_q13 = """
+# 1. Setup
+figures_list = []
+kpi_result = {}
+
+# 2. Logic: Monthly Attendance by University
+df_attended = df[df['Attendance Status'].astype(str).str.lower() == 'attended'].copy()
+
+# Clean University
+df_attended['Uni_Clean'] = df_attended['University Program'].astype(str).apply(lambda x: x.split(',')[0]).str.title()
+
+# Apply Grouping Rule
+# Group specific universities into "Others"
+others_group = [
+    'Grenoble Ecole De Management', 
+    'La Trobe University', 
+    'Monash College', 
+    'The University Of Sydney'
+]
+
+df_attended['Uni_Grouped'] = df_attended['Uni_Clean'].apply(
+    lambda x: 'Others' if x in others_group else x
+)
+
+# Date Construction (YYYY-MM)
+month_to_num = {
+    'january': 1, 'february': 2, 'march': 3, 'april': 4,
+    'may': 5, 'june': 6, 'july': 7, 'august': 8,
+    'september': 9, 'october': 10, 'november': 11, 'december': 12
+}
+
+# Ensure columns exist
+if 'Workshop Timing_Year' in df_attended.columns and 'Workshop Timing_Month' in df_attended.columns:
+    df_attended = df_attended.dropna(subset=['Workshop Timing_Year', 'Workshop Timing_Month'])
+    df_attended['Year'] = df_attended['Workshop Timing_Year'].astype(int)
+    df_attended['Month_Num'] = df_attended['Workshop Timing_Month'].astype(str).str.lower().map(month_to_num)
+    
+    # Filter valid months
+    df_attended = df_attended.dropna(subset=['Month_Num'])
+    df_attended['Month_Num'] = df_attended['Month_Num'].astype(int)
+    
+    # Create Sortable Key and Label
+    df_attended['Time_Key'] = df_attended['Year'] * 100 + df_attended['Month_Num']
+    df_attended['Month_Label'] = df_attended['Year'].astype(str) + '-' + df_attended['Month_Num'].astype(str).str.zfill(2)
+    
+    # Aggregate
+    # Group by Time Key (for sort), Month Label (for display), and University
+    monthly_counts = df_attended.groupby(['Time_Key', 'Month_Label', 'Uni_Grouped']).size().reset_index(name='Attendance Count')
+    
+    # Sort chronologically
+    monthly_counts = monthly_counts.sort_values('Time_Key')
+    
+    # Pivot for Table
+    df_table = monthly_counts.pivot_table(
+        index=['Time_Key', 'Month_Label'], 
+        columns='Uni_Grouped', 
+        values='Attendance Count', 
+        fill_value=0
+    ).reset_index().sort_values('Time_Key').drop(columns=['Time_Key']) # Drop key from display
+    
+    # 3. Visualization: Line Graph
+    if not monthly_counts.empty:
+        fig, ax = plt.subplots(figsize=(14, 8))
+        
+        # We need to identify Top N universities to visualize cleanly, plus Others
+        # or just visualize all from the Grouped set (which already consolidated some)
+        
+        # Get list of unis to plot (Sort by total attendance to put biggest first in legend)
+        uni_totals = monthly_counts.groupby('Uni_Grouped')['Attendance Count'].sum().sort_values(ascending=False)
+        ranked_unis = uni_totals.index.tolist()
+        
+        # Plot
+        sns.lineplot(
+            data=monthly_counts, 
+            x='Month_Label', 
+            y='Attendance Count', 
+            hue='Uni_Grouped', 
+            hue_order=ranked_unis,
+            marker='o',
+            linewidth=2,
+            ax=ax
+        )
+        
+        ax.set_title('Monthly Attendance Trends by University', fontsize=14, weight='bold')
+        ax.set_xlabel('Month')
+        ax.set_ylabel('Attendance Count')
+        plt.xticks(rotation=45)
+        ax.grid(True, alpha=0.3, linestyle='--')
+        ax.legend(title='University', bbox_to_anchor=(1.02, 1), loc='upper left')
+        
+        plt.tight_layout()
+        
+        figures_list.append({
+            'fig': fig,
+            'title': 'Monthly Trends by University',
+            'table': df_table
+        })
+        
+        # 4. KPI Stats
+        kpi_result['Total Attended'] = len(df_attended)
+        if not uni_totals.empty:
+            kpi_result['Top University'] = uni_totals.index[0]
+            
+    else:
+        kpi_result['Status'] = 'No valid monthly data found.'
+        fig = None
+
+else:
+    kpi_result['Status'] = 'Missing Year/Month columns.'
+    fig = None
+"""
+
 
 # ==============================================================================
 # RENDER ALL BLOCKS
@@ -3131,7 +3247,7 @@ def generate_ppt(df_global, exclude_uni=False):
     codes_map = {
         1: code_q1, 2: code_q2, 3: code_q3, 4: code_q4, 5: code_q5,
         6: code_q6, 7: code_q7, 8: code_q8, 9: code_q9, 10: code_q10,
-        11: code_q11, 12: code_q12
+        11: code_q11, 12: code_q12, 13: code_q13
     }
     
     titles = [
@@ -3147,10 +3263,11 @@ def generate_ppt(df_global, exclude_uni=False):
         "Registered vs Attended by Registration Timing",
         "Attendance Attrition by Registration Timing",
         "Overall Attrition Rate",
-        "Unique Counts & Top Students by University"
+        "Unique Counts & Top Students by University",
+        "Monthly Attendance by University"
     ]
 
-    for q_id in range(1, 13):
+    for q_id in range(1, 14):
         q_title = titles[q_id-1]
         code = st.session_state.get(f"edited_code_{q_id}", codes_map[q_id])
         
@@ -3365,14 +3482,15 @@ def main():
             "Attendance by Expected Graduation Period",
             "Registered vs Attended by Registration Timing",
             "Overall Attrition Rate",
-            "Unique Counts & Top Students by University"
+            "Unique Counts & Top Students by University",
+            "Monthly Attendance by University"
         ]
         
         # Code Map
-        default_codes = [code_q1, code_q2, code_q3, code_q4, code_q5, code_q6, code_q7, code_q8, code_q9, code_q10, code_q11, code_q12]
+        default_codes = [code_q1, code_q2, code_q3, code_q4, code_q5, code_q6, code_q7, code_q8, code_q9, code_q10, code_q11, code_q12, code_q13]
         
         # Render all questions
-        for i in range(12):
+        for i in range(13):
             q_id = i + 1
             render_sandbox(q_id, titles[i], default_codes[i])
             
