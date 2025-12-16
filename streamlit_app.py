@@ -3061,7 +3061,7 @@ others_group = [
 ]
 
 df_attended['Uni_Grouped'] = df_attended['Uni_Clean'].apply(
-    lambda x: 'Others' if x in others_group else x
+    lambda x, g=others_group: 'Others' if x in g else x
 )
 
 # Date Construction (YYYY-MM)
