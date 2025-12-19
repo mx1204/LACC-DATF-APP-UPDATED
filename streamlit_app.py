@@ -1478,7 +1478,13 @@ df_yearly_display = df_yearly_display[['Year', 'Registered', 'Attended', 'Attrit
 
 # Create Overall display row
 overall_display = overall_row.reset_index().rename(columns={'index': 'Year'})
-overall_display['Year'] = overall_display['Year'].apply(lambda x: f"{x} ({df_yearly_display['Year'].min()}-{df_yearly_display['Year'].max()})")
+
+if not df_yearly_display.empty:
+    min_year = df_yearly_display['Year'].min()
+    max_year = df_yearly_display['Year'].max()
+    overall_display['Year'] = overall_display['Year'].apply(lambda x: f"{x} ({min_year}-{max_year})")
+else:
+    overall_display['Year'] = overall_display['Year'].apply(lambda x: f"{x}")
 
 # Final Table
 df_table = pd.concat([df_yearly_display, overall_display], ignore_index=True)
