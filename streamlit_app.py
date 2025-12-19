@@ -2377,11 +2377,11 @@ df_attended = df_attended.dropna(subset=['Workshop Timing_Year'])
 df_attended['Workshop Timing_Year'] = df_attended['Workshop Timing_Year'].astype(int)
 
 # 2. Logic: Sub-Category vs University
-# Clean University names
-if 'Uni_Clean' in df_attended.columns:
-    uni_col = 'Uni_Clean'
-elif 'University Program' in df_attended.columns:
+# Use University Program column
+if 'University Program' in df_attended.columns:
     uni_col = 'University Program'
+elif 'Uni_Clean' in df_attended.columns:
+    uni_col = 'Uni_Clean'
 else:
     uni_col = None
 
@@ -2461,7 +2461,7 @@ if uni_col:
                 'table': df_year_table
             })
 else:
-    kpi_result = {'Status': 'University column not found'}
+    kpi_result = {'Status': f'University column not found. Available columns: {list(df_attended.columns)}'}
     figures_list = []
 """
 
