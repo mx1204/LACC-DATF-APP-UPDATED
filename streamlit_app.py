@@ -1490,7 +1490,36 @@ figures_list.append({
 })
 
 
-# --- SECTION 2: ATTENDANCE ANALYSIS (Line Graph + Table) ---
+# --- SECTION 2: COMBINED TRENDS GRAPH ---
+if not yearly_metrics.empty:
+    fig_comb, ax_comb = plt.subplots(figsize=(10, 6))
+    
+    # Plot both lines
+    ax_comb.plot(years, yearly_metrics['Attended'], marker='o', linewidth=2, markersize=8, color='#2ca02c', label='Attended')
+    ax_comb.plot(years, yearly_metrics['Attrition Count'], marker='o', linewidth=2, markersize=8, color='#d62728', label='Attrition Count')
+    
+    ax_comb.set_title('Attendance vs Attrition Trends', fontsize=14, weight='bold')
+    ax_comb.set_xlabel('Year', fontsize=12)
+    ax_comb.set_ylabel('Count', fontsize=12)
+    ax_comb.grid(True, alpha=0.3, linestyle='--')
+    ax_comb.xaxis.set_major_locator(plt.MaxNLocator(integer=True))
+    ax_comb.legend()
+    
+    # Add labels for both
+    for year, count in zip(years, yearly_metrics['Attended']):
+        ax_comb.annotate(str(count), (year, count), textcoords="offset points", xytext=(0,10), ha='center', fontsize=9, weight='bold', color='#2ca02c')
+        
+    for year, count in zip(years, yearly_metrics['Attrition Count']):
+        ax_comb.annotate(str(count), (year, count), textcoords="offset points", xytext=(0,-15), ha='center', fontsize=9, weight='bold', color='#d62728')
+
+    figures_list.append({
+        'title': 'Combined Trends',
+        'table': None, # No specific table, relies on overall or subsequent tables
+        'fig': fig_comb
+    })
+
+
+# --- SECTION 3: ATTENDANCE ANALYSIS (Line Graph + Table) ---
 if not yearly_metrics.empty:
     # 2a. Table
     df_att = yearly_metrics[['Attended']].copy().reset_index()
