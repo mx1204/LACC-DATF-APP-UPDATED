@@ -1480,11 +1480,12 @@ df_yearly_display = df_yearly_display[['Year', 'Registered', 'Attended', 'Attrit
 overall_display = overall_row.reset_index().rename(columns={'index': 'Year'})
 
 if not df_yearly_display.empty:
-    min_year = df_yearly_display['Year'].min()
-    max_year = df_yearly_display['Year'].max()
-    overall_display['Year'] = overall_display['Year'].apply(lambda x: f"{x} ({min_year}-{max_year})")
+    min_year = str(df_yearly_display['Year'].min())
+    max_year = str(df_yearly_display['Year'].max())
+    # Avoid lambda scope issue by doing direct vectorized operation or direct assignment since there is only 1 row
+    overall_display['Year'] = overall_display['Year'].astype(str) + " (" + min_year + "-" + max_year + ")"
 else:
-    overall_display['Year'] = overall_display['Year'].apply(lambda x: f"{x}")
+    overall_display['Year'] = overall_display['Year'].astype(str)
 
 # Final Table
 df_table = pd.concat([df_yearly_display, overall_display], ignore_index=True)
