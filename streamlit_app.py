@@ -2199,23 +2199,32 @@ df_attended = df_attended.dropna(subset=['Workshop Timing_Year'])
 df_attended['Workshop Timing_Year'] = df_attended['Workshop Timing_Year'].astype(int)
 
 # 2. Logic
-# Student Type: Use Citizenship, treat NaN as Local
-def get_student_type(val):
-    # If NaN or empty, treat as Local
-    if pd.isna(val) or str(val).strip() == '':
-        return 'Local'
-    val_str = str(val).lower()
-    if 'singapore' in val_str or 'pr' in val_str:
-        return 'Local'
-    return 'International'
+# Use existing Student_Type column if available, otherwise create it
+if 'Student_Type' not in df_attended.columns:
+    # Student Type: Use Citizenship, treat NaN as Local
+    def get_student_type(val):
+        # If NaN or empty, treat as Local
+        if pd.isna(val) or str(val).strip() == '':
+            return 'Local'
+        val_str = str(val).lower()
+        if 'singapore' in val_str or 'pr' in val_str:
+            return 'Local'
+        return 'International'
 
-if 'Citizenship' in df_attended.columns:
-    df_attended['Student_Type'] = df_attended['Citizenship'].apply(get_student_type)
-else:
-    df_attended['Student_Type'] = 'Local'
+    if 'Citizenship' in df_attended.columns:
+        df_attended['Student_Type'] = df_attended['Citizenship'].apply(get_student_type)
+    else:
+        df_attended['Student_Type'] = 'Local'
+
+# Debug: Show Student_Type distribution
+student_type_counts = df_attended['Student_Type'].value_counts()
+kpi_result = {
+    'Total Records': len(df_attended),
+    'Local Count': student_type_counts.get('Local', 0),
+    'International Count': student_type_counts.get('International', 0)
+}
 
 # 3. Stats
-kpi_result = {}
 figures_list = []
 
 # 4. Yearly Pie Charts
