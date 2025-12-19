@@ -1458,6 +1458,107 @@ yearly_metrics = df_calc.groupby('Workshop Timing_Year').agg(
 
 # Calculate Attrition Count
 yearly_metrics['Attrition Count'] = yearly_metrics['Registered'] - yearly_metrics['Attended']
+years = yearly_metrics.index.sort_values()
+
+# Set KPI Result with Years Compared
+if not years.empty:
+    kpi_result["Years Compared"] = f"{years.min()} - {years.max()}"
+
+# --- SECTION 1: OVERALL SUMMARY TABLE ---
+# Calculate Totals
+total_registered = yearly_metrics['Registered'].sum()
+total_attended = yearly_metrics['Attended'].sum()
+total_attrition = yearly_metrics['Attrition Count'].sum()
+
+# Create Overall Row
+# Format: Year | Registered | Attended | Attrition Count
+overall_desc = "Overall"
+if not years.empty:
+    overall_desc = f"Overall ({years.min()}-{years.max()})"
+
+df_overall = pd.DataFrame({
+    'Year': [overall_desc],
+    'Registered': [total_registered],
+    'Attended': [total_attended],
+    'Attrition Count': [total_attrition]
+})
+
+figures_list.append({
+    'title': 'Overall Summary',
+    'table': df_overall,
+    'fig': None
+})
+
+
+# --- SECTION 2: ATTENDANCE ANALYSIS (Line Graph + Table) ---
+if not yearly_metrics.empty:
+    # 2a. Table
+    df_att = yearly_metrics[['Attended']].copy().reset_index()
+    df_att.rename(columns={'Workshop Timing_Year': 'Year'}, inplace=True)
+    
+    # Calculate % Change
+    df_att['% Change'] = df_att['Attended'].pct_change().mul(100).fillna(0)
+    # Format % Change (handle first row as New or -)
+    def fmt_pct(val, idx, series):
+        if idx == 0: return "-"
+        prev = series.iloc[idx-1]
+        if prev == 0: return "New"
+        return f"{val:+.1f}%"
+        
+    df_att['% Change'] = [fmt_pct(x, i, df_att['Attended']) for i, x in enumerate(df_att['% Change'])]
+    
+    # 2b. Graph
+    fig_att, ax_att = plt.subplots(figsize=(10, 6))
+    ax_att.plot(years, yearly_metrics['Attended'], marker='o', linewidth=2, markersize=8, color='#2ca02c', label='Attended')
+    
+    ax_att.set_title('Yearly Attendance Trend', fontsize=14, weight='bold')
+    ax_att.set_xlabel('Year', fontsize=12)
+    ax_att.set_ylabel('Attendees', fontsize=12)
+    ax_att.grid(True, alpha=0.3, linestyle='--')
+    ax_att.xaxis.set_major_locator(plt.MaxNLocator(integer=True))
+    
+    # Add labels
+    for year, count in zip(years, yearly_metrics['Attended']):
+        ax_att.annotate(str(count), (year, count), textcoords="offset points", xytext=(0,10), ha='center', fontsize=9, weight='bold')
+        
+    figures_list.append({
+        'title': 'Attendance Analysis',
+        'table': df_att,
+        'fig': fig_att
+    })
+
+
+# --- SECTION 3: ATTRITION ANALYSIS (Line Graph + Table) ---
+if not yearly_metrics.empty:
+    # 3a. Table
+    df_attr = yearly_metrics[['Attrition Count']].copy().reset_index()
+    df_attr.rename(columns={'Workshop Timing_Year': 'Year'}, inplace=True)
+    
+    # Calculate % Change
+    df_attr['% Change'] = df_attr['Attrition Count'].pct_change().mul(100).fillna(0)
+    
+    df_attr['% Change'] = [fmt_pct(x, i, df_attr['Attrition Count']) for i, x in enumerate(df_attr['% Change'])]
+    
+    # 3b. Graph
+    fig_attr, ax_attr = plt.subplots(figsize=(10, 6))
+    ax_attr.plot(years, yearly_metrics['Attrition Count'], marker='o', linewidth=2, markersize=8, color='#d62728', label='Attrition Count')
+    
+    ax_attr.set_title('Yearly Attrition Trend', fontsize=14, weight='bold')
+    ax_attr.set_xlabel('Year', fontsize=12)
+    ax_attr.set_ylabel('Attrition Count', fontsize=12)
+    ax_attr.grid(True, alpha=0.3, linestyle='--')
+    ax_attr.xaxis.set_major_locator(plt.MaxNLocator(integer=True))
+    
+    # Add labels
+    for year, count in zip(years, yearly_metrics['Attrition Count']):
+        ax_attr.annotate(str(count), (year, count), textcoords="offset points", xytext=(0,10), ha='center', fontsize=9, weight='bold')
+
+    figures_list.append({
+        'title': 'Attrition Analysis',
+        'table': df_attr,
+        'fig': fig_attr
+    })
+else:
     kpi_result['Status'] = "No valid yearly data found."
 """
 
