@@ -1474,31 +1474,6 @@ years = yearly_metrics.index.sort_values()
 if not years.empty:
     kpi_result["Years Compared"] = f"{years.min()} - {years.max()}"
 
-# --- SECTION 1: OVERALL SUMMARY TABLE ---
-# Calculate Totals
-total_registered = yearly_metrics['Registered'].sum()
-total_attended = yearly_metrics['Attended'].sum()
-total_attrition = yearly_metrics['Attrition Count'].sum()
-
-# Create Overall Row
-# Format: Year | Registered | Attended | Attrition Count
-overall_desc = "Overall"
-if not years.empty:
-    overall_desc = f"Overall ({years.min()}-{years.max()})"
-
-df_overall = pd.DataFrame({
-    'Year': [overall_desc],
-    'Registered': [total_registered],
-    'Attended': [total_attended],
-    'Attrition Count': [total_attrition]
-})
-
-figures_list.append({
-    'title': f'Overall Attendance and Attrition for {years.min()} and {years.max()}' if not years.empty and years.min() != years.max() else f'Overall Attendance and Attrition for {years.min()}' if not years.empty else 'Overall Attendance and Attrition',
-    'table': df_overall,
-    'fig': None
-})
-
 
 # --- SECTION 2: COMBINED TRENDS GRAPH ---
 if not yearly_metrics.empty:
