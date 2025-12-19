@@ -1522,9 +1522,13 @@ if not yearly_metrics.empty:
     for year, count in zip(years, yearly_metrics['Attrition Count']):
         ax_comb.annotate(str(count), (year, count), textcoords="offset points", xytext=(0,-15), ha='center', fontsize=9, weight='bold', color='#d62728')
 
+    # Create Combined Statistics Table
+    df_combined_table = yearly_metrics[['Registered', 'Attended', 'Attrition Count']].reset_index()
+    df_combined_table.columns = ['Year', 'Registered', 'Attended', 'Attrition Count']
+
     figures_list.append({
         'title': f'Combined Trends ({years.min()}-{years.max()})',
-        'table': None, # No specific table, relies on overall or subsequent tables
+        'table': df_combined_table, 
         'fig': fig_comb
     })
 
