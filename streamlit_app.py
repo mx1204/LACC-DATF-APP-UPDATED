@@ -3648,6 +3648,39 @@ def main():
         pass
         
         run_data_ingestion()
+        
+        # --- QUESTIONS OVERVIEW SECTION ---
+        st.markdown("---")
+        st.markdown("### 📊 Available Analysis Questions")
+        st.markdown("Once your data is processed, you'll have access to the following analysis questions:")
+        
+        # Create a nice grid layout for questions
+        questions_data = [
+            ("Q1: Attendance and Attrition", QUESTION_PURPOSES[1]),
+            ("Q2: Unique Participant Count", QUESTION_PURPOSES[2]),
+            ("Q3: Most Popular Days & Time Slots", QUESTION_PURPOSES[3]),
+            ("Q4: Attendance by University", QUESTION_PURPOSES[4]),
+            ("Q5: Workshop Attendance by Sub-Category", QUESTION_PURPOSES[5]),
+            ("Q6: Attendance by Student Type", QUESTION_PURPOSES[6]),
+            ("Q7: Workshop Attendance by Sub-Category & University", QUESTION_PURPOSES[7]),
+            ("Q8: Workshop Attendance by Sub-Category & Academic Major", QUESTION_PURPOSES[8]),
+            ("Q9: Attendance by Expected Graduation Period", QUESTION_PURPOSES[9]),
+            ("Q10: Registered vs Attended by Registration Timing", QUESTION_PURPOSES[10]),
+            ("Q11: Unique Counts & Top Students by University", QUESTION_PURPOSES[11]),
+            ("Q12: Monthly Attendance by University", QUESTION_PURPOSES[12]),
+            ("Q13: Trainer by Attendance", QUESTION_PURPOSES[13]),
+            ("Q14: Workshop Titles by Attendance", QUESTION_PURPOSES[14])
+        ]
+        
+        # Display in 2 columns
+        col1, col2 = st.columns(2)
+        
+        for i, (title, description) in enumerate(questions_data):
+            with col1 if i % 2 == 0 else col2:
+                st.markdown(f"**{title}**")
+                st.markdown(f"{description}")
+                st.markdown("")  # Add spacing
+
 
 
     # ==============================================================================
