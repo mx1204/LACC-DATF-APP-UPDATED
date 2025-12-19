@@ -1822,7 +1822,7 @@ else:
                         details_list.append(f"{idx}. {event} ({row['Attendance']} pax{run_str})")
                     
                     # Join with newlines
-                    details_str = "\n".join(details_list)
+                    details_str = "\\n".join(details_list)
 
                     overall_data.append({
                         'Rank': rank,
@@ -1886,7 +1886,7 @@ else:
                                 run_str = f", {row['Runs']} runs" if row['Runs'] > 1 else ", 1 run"
                                 details_list.append(f"{idx}. {event} ({row['Attendance']} pax{run_str})")
                             
-                            details_str = "\n".join(details_list)
+                            details_str = "\\n".join(details_list)
 
                             yearly_data.append({
                                 'Year': int(year),
