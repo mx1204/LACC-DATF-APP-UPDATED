@@ -1430,16 +1430,13 @@ def render_sandbox(q_id, title, default_code, editable_title=False):
 # Q1 CODE
 # Q1 CODE
 # Q1 CODE
+# Q1 CODE
 code_q1 = """
 # 1. Setup
 figures_list = []
 kpi_result = {}
 
-# 2. Logic: Attendance & Attrition (Registered vs Attended)
-# Registered = All records with valid Year
-# Attended = Status 'Attended'
-# Attrition = Registered - Attended
-
+# 2. Logic: Prepare Data
 # Create working copy
 df_calc = df.copy()
 
@@ -1461,72 +1458,6 @@ yearly_metrics = df_calc.groupby('Workshop Timing_Year').agg(
 
 # Calculate Attrition Count
 yearly_metrics['Attrition Count'] = yearly_metrics['Registered'] - yearly_metrics['Attended']
-
-# 3. Build Table Data (Yearly + Overall)
-# Calculate Overall
-overall_row = pd.DataFrame({
-    'Registered': [yearly_metrics['Registered'].sum()],
-    'Attended': [yearly_metrics['Attended'].sum()],
-    'Attrition Count': [yearly_metrics['Attrition Count'].sum()]
-}, index=['Overall (All Years)'])
-
-# Combine: Yearly rows + Overall row
-# We want Year as a column for the dashboard table
-df_yearly_display = yearly_metrics.reset_index()
-df_yearly_display['Year'] = df_yearly_display['Workshop Timing_Year'].astype(str)
-df_yearly_display = df_yearly_display[['Year', 'Registered', 'Attended', 'Attrition Count']]
-
-# Create Overall display row
-overall_display = overall_row.reset_index().rename(columns={'index': 'Year'})
-
-if not df_yearly_display.empty:
-    min_year = str(df_yearly_display['Year'].min())
-    max_year = str(df_yearly_display['Year'].max())
-    # Avoid lambda scope issue by doing direct vectorized operation or direct assignment since there is only 1 row
-    overall_display['Year'] = overall_display['Year'].astype(str) + " (" + min_year + "-" + max_year + ")"
-else:
-    overall_display['Year'] = overall_display['Year'].astype(str)
-
-# Final Table
-df_table = pd.concat([df_yearly_display, overall_display], ignore_index=True)
-
-# 4. Visualization: Stacked Bar Chart (Yearly)
-if not yearly_metrics.empty:
-    fig, ax = plt.subplots(figsize=(10, 6))
-    
-    years = yearly_metrics.index
-    attended = yearly_metrics['Attended']
-    attrition = yearly_metrics['Attrition Count']
-    
-    # Plot Stacked Bar
-    # Bottom: Attended, Top: Attrition
-    p1 = ax.bar(years, attended, label='Attended', color='#2ca02c') # Green
-    p2 = ax.bar(years, attrition, bottom=attended, label='Attrition', color='#d62728') # Red
-    
-    ax.set_title(f'Yearly Attendance & Attrition ({years.min()}-{years.max()})', fontsize=14, weight='bold')
-    ax.set_ylabel('Number of Students', fontsize=12)
-    ax.set_xlabel('Year', fontsize=12)
-    ax.legend()
-    ax.grid(True, alpha=0.3, linestyle='--')
-    ax.xaxis.set_major_locator(plt.MaxNLocator(integer=True))
-
-    # Add labels
-    ax.bar_label(p1, label_type='center', color='white', fontweight='bold')
-    ax.bar_label(p2, label_type='center', color='white', fontweight='bold')
-    # Add total top label
-    for i, total in enumerate(yearly_metrics['Registered']):
-        ax.text(years[i], total, f"Total: {total}", ha='center', va='bottom', fontsize=9, fontweight='bold')
-
-    plt.tight_layout()
-    
-    # Stats for box
-    kpi_result = {
-        'Overall Attendance': overall_row['Attended'].iloc[0],
-        'Overall Attrition': overall_row['Attrition Count'].iloc[0]
-    }
-    
-else:
-    fig = None
     kpi_result['Status'] = "No valid yearly data found."
 """
 
