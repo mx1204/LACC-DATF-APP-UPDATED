@@ -1080,7 +1080,7 @@ QUESTION_PURPOSES = {
     4: "🎓 **Compares university representation** to understand engagement of student in respective partner institutions",
     5: "📚 **Breaks down workshop categories** to identify which topics attract the most students",
     6: "🌍 **Analyzes local vs international** student participation to understand engagement differences between student types",
-    7: "🔍 **Cross-analyzes workshop categories** by student type to see which topics appeal to local vs international students",
+    7: "🔍 **Cross-analyzes workshop categories** by university to see which topics appeal to students from different institutions",
     8: "📊 **Cross-analyzes workshop categories** by academic major to understand which program types engage with which workshop topics",
     9: "⏱️ **Examines graduation proximity** to understand when students attend workshops relative to their expected graduation date",
     10: "📅 **Analyzes attrition rates** by comparing registered vs. actual attendance based on how far in advance students registered",
