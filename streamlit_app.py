@@ -3728,7 +3728,7 @@ def main():
     # ==============================================================================
     elif st.session_state['current_page'] == 3:
         # Title removed as requested
-        st.markdown("<h5 style='text-align: center;'>Generate a PowerPoint presentation summarizing the analysis from all 10 questions.</h5>", unsafe_allow_html=True)
+        st.markdown("<h5 style='text-align: center;'>Generate a PowerPoint presentation summarizing the analysis from all 14 questions.</h5>", unsafe_allow_html=True)
         
         # Exclude Uni Events Option
         st.markdown("")
