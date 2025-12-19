@@ -1077,7 +1077,9 @@ QUESTION_PURPOSES = {
     7: "🔍 **Cross-analyzes workshop categories** by student type to see which topics appeal to local vs international students",
     8: "📊 **Cross-analyzes workshop categories** by academic major to understand which program types engage with which workshop topics",
     9: "⏱️ **Examines graduation proximity** to understand when students attend workshops relative to their expected graduation date",
-    10: "📅 **Analyzes attrition rates** by comparing registered vs. actual attendance based on how far in advance students registered"
+    10: "📅 **Analyzes attrition rates** by comparing registered vs. actual attendance based on how far in advance students registered",
+    11: "🏆 **Identifies top participating students** per university to recognize high engagement",
+    12: "📅 **Tracks monthly attendance trends** by university to identify seasonal engagement patterns"
 }
 
 # --- FUNCTION TO RENDER SANDBOX BLOCKS ---
@@ -1177,7 +1179,9 @@ def render_sandbox(q_id, title, default_code, editable_title=False):
             7: ['Attendance Status', 'Sub-Category', 'Student_Type', 'Workshop Timing_Year'],
             8: ['Attendance Status', 'Sub-Category', 'Program Classification'],
             9: ['Attendance Status', 'Expected Grad Term', 'Grad_Year', 'Grad_Month', 'Grad_YYYY-MM', 'Attended Date'],
-            10: ['Attendance Status', 'Registered Date', 'Workshop Timing_Year', 'Workshop Timing_Month', 'Workshop Timing_DayNumber']
+            10: ['Attendance Status', 'Registered Date', 'Workshop Timing_Year', 'Workshop Timing_Month', 'Workshop Timing_DayNumber'],
+            11: ['Attendance Status', 'University Program', 'Student Name', 'SIMID', 'Display_Name'],
+            12: ['Attendance Status', 'University Program', 'Uni_Clean', 'Uni_Grouped', 'Workshop Timing_Year', 'Workshop Timing_Month']
         }
         
         if q_id in attr_map:
@@ -2866,114 +2870,9 @@ else:
 
 
 
-# Q11 CODE
+# Q11 CODE (Formerly Q12)
 code_q11 = """
-# 1. Setup
-figures_list = []
-kpi_result = {}
 
-# We need ALL records
-df_analysis = df.copy()
-
-# 2. Logic: Attrition Count & Rate
-
-# Clean Year
-df_analysis = df_analysis.dropna(subset=['Workshop Timing_Year'])
-df_analysis['Workshop Timing_Year'] = df_analysis['Workshop Timing_Year'].astype(int)
-
-# Define Status: Registered = All, Attended = Valid Attendance, Attrition (Absent) = Registered - Attended
-# In this dataset, we can define 'Attended' as 'Attendance Status' == 'Attended'
-# 'Absent' (Attrition) is everyone else.
-
-df_analysis['Is_Attended'] = df_analysis['Attendance Status'].astype(str).str.lower() == 'attended'
-
-# Group by Year
-# Count Total (Registered)
-yearly_registered = df_analysis.groupby('Workshop Timing_Year').size()
-# Count Attended
-yearly_attended = df_analysis[df_analysis['Is_Attended']].groupby('Workshop Timing_Year').size()
-# Calculate Attrition (Registered - Attended)
-# Use reindex to ensure all years are present, fillna 0
-years = sorted(yearly_registered.index.unique())
-# Align series
-yearly_registered = yearly_registered.reindex(years, fill_value=0)
-yearly_attended = yearly_attended.reindex(years, fill_value=0)
-
-yearly_attrition_count = yearly_registered - yearly_attended
-yearly_attrition_rate = (yearly_attrition_count / yearly_registered * 100).fillna(0)
-
-# 3. Create DataFrame for Table
-df_table = pd.DataFrame({
-    'Year': years,
-    'Registered': yearly_registered.values,
-    'Attended': yearly_attended.values,
-    'Attrition Count': yearly_attrition_count.values,
-    'Attrition Rate': yearly_attrition_rate.values
-})
-
-# Format Rate
-df_table['Attrition Rate'] = df_table['Attrition Rate'].map('{:.1f}%'.format)
-
-# Calculate % Change in Attrition Count (Year-over-Year)
-# Formula: ((Current - Previous) / Previous) * 100
-# We'll use a shifted column
-attrition_counts = df_table['Attrition Count']
-attrition_counts_shifted = attrition_counts.shift(1)
-df_table['Count % Change'] = ((attrition_counts - attrition_counts_shifted) / attrition_counts_shifted * 100)
-
-# Format % Change
-def fmt_change(val, prev):
-    if pd.isna(val) or pd.isna(prev) or prev == 0:
-        return "-"
-    return f"{val:+.1f}%"
-
-# Create formatted column
-df_table['Count % Change'] = [fmt_change(c, p) for c, p in zip(df_table['Count % Change'], attrition_counts_shifted)]
-
-# 4. Visualization: Line Graph of Attrition Count per Year
-if not df_table.empty:
-    fig, ax = plt.subplots(figsize=(10, 6))
-    
-    # Plot Line
-    ax.plot(df_table['Year'], df_table['Attrition Count'], marker='o', linewidth=2, markersize=8, color='#e74c3c', label='Attrition Count')
-    
-    # Add labels
-    for i, txt in enumerate(df_table['Attrition Count']):
-        ax.annotate(f"{int(txt)}", 
-                    (df_table['Year'][i], df_table['Attrition Count'][i]),
-                    textcoords="offset points", 
-                    xytext=(0,10), 
-                    ha='center',
-                    fontweight='bold')
-
-    ax.set_title('Overall Attrition Count per Year', fontsize=14, weight='bold')
-    ax.set_ylabel('Attrition Count', fontsize=12)
-    ax.set_xlabel('Year', fontsize=12)
-    ax.set_xticks(df_table['Year']) # Force integer ticks
-    ax.grid(True, alpha=0.3, linestyle='--')
-    ax.legend()
-    
-    plt.tight_layout()
-else:
-    fig = None
-    kpi_result['Status'] = 'No data available for attrition analysis'
-
-# 5. KPI Stats
-total_registered = yearly_registered.sum()
-total_attended = yearly_attended.sum()
-total_attrition = total_registered - total_attended
-overall_attrition_rate = (total_attrition / total_registered * 100) if total_registered > 0 else 0
-
-kpi_result = {
-    'Total Registered': total_registered,
-    'Total Attrition': total_attrition,
-    'Overall Attrition Rate': f"{overall_attrition_rate:.1f}%"
-}
-"""
-
-
-# Q12 CODE
-code_q12 = """
 # 1. Setup
 figures_list = []
 kpi_result = {}
@@ -3054,8 +2953,8 @@ if not uni_unique_counts.empty:
 """
 
 
-# Q13 CODE
-code_q13 = """
+# Q12 CODE (Formerly Q13)
+code_q12 = """
 # 1. Setup
 figures_list = []
 kpi_result = {}
@@ -3276,7 +3175,7 @@ def generate_ppt(df_global, exclude_uni=False):
     codes_map = {
         1: code_q1, 2: code_q2, 3: code_q3, 4: code_q4, 5: code_q5,
         6: code_q6, 7: code_q7, 8: code_q8, 9: code_q9, 10: code_q10,
-        11: code_q11, 12: code_q12, 13: code_q13
+        11: code_q11, 12: code_q12
     }
     
     titles = [
@@ -3290,13 +3189,11 @@ def generate_ppt(df_global, exclude_uni=False):
         "Workshop Attendance by Sub-Category & Academic Major",
         "Attendance by Expected Graduation Period",
         "Registered vs Attended by Registration Timing",
-        "Attendance Attrition by Registration Timing",
-        "Overall Attrition Rate",
         "Unique Counts & Top Students by University",
         "Monthly Attendance by University"
     ]
 
-    for q_id in range(1, 14):
+    for q_id in range(1, 13):
         q_title = titles[q_id-1]
         code = st.session_state.get(f"edited_code_{q_id}", codes_map[q_id])
         
@@ -3510,16 +3407,15 @@ def main():
             "Workshop Attendance by Sub-Category & Academic Major",
             "Attendance by Expected Graduation Period",
             "Registered vs Attended by Registration Timing",
-            "Overall Attrition Rate",
             "Unique Counts & Top Students by University",
             "Monthly Attendance by University"
         ]
         
         # Code Map
-        default_codes = [code_q1, code_q2, code_q3, code_q4, code_q5, code_q6, code_q7, code_q8, code_q9, code_q10, code_q11, code_q12, code_q13]
+        default_codes = [code_q1, code_q2, code_q3, code_q4, code_q5, code_q6, code_q7, code_q8, code_q9, code_q10, code_q11, code_q12]
         
         # Render all questions
-        for i in range(13):
+        for i in range(12):
             q_id = i + 1
             render_sandbox(q_id, titles[i], default_codes[i])
             
