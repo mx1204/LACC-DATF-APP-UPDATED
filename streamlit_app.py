@@ -1184,7 +1184,7 @@ def render_sandbox(q_id, title, default_code, editable_title=False):
             4: ['Attendance Status', 'University Program', 'Workshop Timing_Year'],
             5: ['Attendance Status', 'Sub-Category', 'Workshop Timing_Year'],
             6: ['Attendance Status', 'Student_Type', 'Workshop Timing_Year'],
-            7: ['Attendance Status', 'Sub-Category', 'Student_Type', 'Workshop Timing_Year'],
+            7: ['Attendance Status', 'Sub-Category', 'University Program', 'Uni_Clean', 'Workshop Timing_Year'],
             8: ['Attendance Status', 'Sub-Category', 'Program Classification'],
             9: ['Attendance Status', 'Expected Grad Term', 'Grad_Year', 'Grad_Month', 'Grad_YYYY-MM', 'Attended Date'],
             10: ['Attendance Status', 'Registered Date', 'Workshop Timing_Year', 'Workshop Timing_Month', 'Workshop Timing_DayNumber'],
@@ -2376,104 +2376,93 @@ df_attended = df[df['Attendance Status'].astype(str).str.lower() == 'attended'].
 df_attended = df_attended.dropna(subset=['Workshop Timing_Year'])
 df_attended['Workshop Timing_Year'] = df_attended['Workshop Timing_Year'].astype(int)
 
-# 2. Logic: Sub-Category vs Student Type
-# Define Student Type if not already in data
-def get_student_type(val):
-    val = str(val).lower()
-    if 'singapore' in val:
-        return 'Local'
-    return 'International'
+# 2. Logic: Sub-Category vs University
+# Clean University names
+if 'Uni_Clean' in df_attended.columns:
+    uni_col = 'Uni_Clean'
+elif 'University Program' in df_attended.columns:
+    uni_col = 'University Program'
+else:
+    uni_col = None
 
-if 'Nationality' in df_attended.columns:
-    df_attended['Student_Type'] = df_attended['Nationality'].apply(get_student_type)
-elif 'Citizenship' in df_attended.columns:
-    df_attended['Student_Type'] = df_attended['Citizenship'].apply(get_student_type)
-
-# Group by Sub-Category and Student Type
-subcat_student_counts = df_attended.groupby(['Sub-Category', 'Student_Type']).size().unstack(fill_value=0)
-
-# Ensure both columns exist
-for col in ['Local', 'International']:
-    if col not in subcat_student_counts.columns:
-        subcat_student_counts[col] = 0
-
-# 3. Stats
-kpi_result = {}
-figures_list = []
-
-# --- OVERALL ANALYSIS ---
-# 4a. Overall Graph
-fig, ax = plt.subplots(figsize=(12, 6))
-subcat_student_counts.plot(kind='bar', stacked=False, color=['#ff9999', '#66b3ff'], ax=ax)
-ax.set_title('Overall Workshop Attendance by Sub-Category & Student Type')
-ax.set_xlabel('Sub-Category')
-ax.set_ylabel('Number of Attendees')
-ax.legend(title='Student Type')
-# Apply Title Case to x-axis labels
-ax.set_xticklabels([label.get_text().title() if isinstance(label.get_text(), str) else label.get_text() for label in ax.get_xticklabels()], rotation=45, ha='right')
-plt.tight_layout()
-
-# 4b. Overall Table
-df_overall = subcat_student_counts.copy()
-df_overall['Total'] = df_overall.sum(axis=1)
-df_overall['Local %'] = (df_overall['Local'] / df_overall['Total'] * 100).map('{:.1f}%'.format)
-df_overall['International %'] = (df_overall['International'] / df_overall['Total'] * 100).map('{:.1f}%'.format)
-# Reorder columns
-df_overall = df_overall[['Local', 'Local %', 'International', 'International %', 'Total']]
-df_overall = df_overall.sort_values('Total', ascending=False).reset_index()
-# Apply Title Case to Sub-Category column
-df_overall['Sub-Category'] = df_overall['Sub-Category'].apply(lambda x: x.title() if isinstance(x, str) else x)
-
-figures_list.append({
-    'fig': fig,
-    'title': 'Overall Analysis',
-    'table': df_overall
-})
-
-# Use Overall table as default
-df_table = df_overall
-
-# --- YEARLY ANALYSIS ---
-years = sorted(df_attended['Workshop Timing_Year'].unique())
-for year in years:
-    df_year = df_attended[df_attended['Workshop Timing_Year'] == year]
-    if not df_year.empty:
-        # Group by Sub-Category and Student Type for this Year
-        year_counts = df_year.groupby(['Sub-Category', 'Student_Type']).size().unstack(fill_value=0)
-        
-        # Ensure cols exist
-        for col in ['Local', 'International']:
-            if col not in year_counts.columns:
-                year_counts[col] = 0
-                
-        # Graph
-        fig, ax = plt.subplots(figsize=(12, 6))
-        year_counts.plot(kind='bar', stacked=False, color=['#ff9999', '#66b3ff'], ax=ax)
-        ax.set_title(f'{year} Workshop Attendance by Sub-Category & Student Type')
-        ax.set_xlabel('Sub-Category')
-        ax.set_ylabel('Number of Attendees')
-        ax.legend(title='Student Type')
-        # Apply Title Case to x-axis labels
-        ax.set_xticklabels([label.get_text().title() if isinstance(label.get_text(), str) else label.get_text() for label in ax.get_xticklabels()], rotation=45, ha='right')
-        plt.tight_layout()
-        
-        # Table
-        df_year_table = year_counts.copy()
-        df_year_table['Total'] = df_year_table.sum(axis=1)
-        # Avoid division by zero
-        df_year_table['Local %'] = df_year_table.apply(lambda x: f"{(x['Local']/x['Total']*100):.1f}%" if x['Total']>0 else "0.0%", axis=1)
-        df_year_table['International %'] = df_year_table.apply(lambda x: f"{(x['International']/x['Total']*100):.1f}%" if x['Total']>0 else "0.0%", axis=1)
-        
-        df_year_table = df_year_table[['Local', 'Local %', 'International', 'International %', 'Total']]
-        df_year_table = df_year_table.sort_values('Total', ascending=False).reset_index()
-        # Apply Title Case to Sub-Category column
-        df_year_table['Sub-Category'] = df_year_table['Sub-Category'].apply(lambda x: x.title() if isinstance(x, str) else x)
-        
-        figures_list.append({
-            'fig': fig,
-            'title': f'{year} Analysis',
-            'table': df_year_table
-        })
+if uni_col:
+    # Group by Sub-Category and University
+    subcat_uni_counts = df_attended.groupby(['Sub-Category', uni_col]).size().unstack(fill_value=0)
+    
+    # 3. Stats
+    kpi_result = {}
+    figures_list = []
+    
+    # --- OVERALL ANALYSIS ---
+    # 4a. Overall Graph - Top 10 Universities
+    # Get top universities by total attendance
+    uni_totals = subcat_uni_counts.sum(axis=0).sort_values(ascending=False).head(10)
+    top_unis = uni_totals.index.tolist()
+    
+    # Filter to top universities
+    subcat_uni_top = subcat_uni_counts[top_unis]
+    
+    fig, ax = plt.subplots(figsize=(14, 6))
+    subcat_uni_top.plot(kind='bar', stacked=False, ax=ax, colormap='tab10')
+    ax.set_title('Overall Workshop Attendance by Sub-Category & University (Top 10)')
+    ax.set_xlabel('Sub-Category')
+    ax.set_ylabel('Number of Attendees')
+    ax.legend(title='University', bbox_to_anchor=(1.05, 1), loc='upper left')
+    ax.set_xticklabels([label.get_text().title() if isinstance(label.get_text(), str) else label.get_text() for label in ax.get_xticklabels()], rotation=45, ha='right')
+    plt.tight_layout()
+    
+    # 4b. Overall Table
+    df_overall = subcat_uni_top.copy()
+    df_overall['Total'] = df_overall.sum(axis=1)
+    df_overall = df_overall.sort_values('Total', ascending=False).reset_index()
+    df_overall['Sub-Category'] = df_overall['Sub-Category'].apply(lambda x: x.title() if isinstance(x, str) else x)
+    
+    figures_list.append({
+        'fig': fig,
+        'title': 'Overall Analysis (Top 10 Universities)',
+        'table': df_overall
+    })
+    
+    # Use Overall table as default
+    df_table = df_overall
+    
+    # --- YEARLY ANALYSIS ---
+    years = sorted(df_attended['Workshop Timing_Year'].unique())
+    for year in years:
+        df_year = df_attended[df_attended['Workshop Timing_Year'] == year]
+        if not df_year.empty:
+            # Group by Sub-Category and University for this Year
+            year_counts = df_year.groupby(['Sub-Category', uni_col]).size().unstack(fill_value=0)
+            
+            # Get top 10 universities for this year
+            year_uni_totals = year_counts.sum(axis=0).sort_values(ascending=False).head(10)
+            year_top_unis = year_uni_totals.index.tolist()
+            year_counts_top = year_counts[year_top_unis]
+            
+            # Graph
+            fig, ax = plt.subplots(figsize=(14, 6))
+            year_counts_top.plot(kind='bar', stacked=False, ax=ax, colormap='tab10')
+            ax.set_title(f'{year} Workshop Attendance by Sub-Category & University (Top 10)')
+            ax.set_xlabel('Sub-Category')
+            ax.set_ylabel('Number of Attendees')
+            ax.legend(title='University', bbox_to_anchor=(1.05, 1), loc='upper left')
+            ax.set_xticklabels([label.get_text().title() if isinstance(label.get_text(), str) else label.get_text() for label in ax.get_xticklabels()], rotation=45, ha='right')
+            plt.tight_layout()
+            
+            # Table
+            df_year_table = year_counts_top.copy()
+            df_year_table['Total'] = df_year_table.sum(axis=1)
+            df_year_table = df_year_table.sort_values('Total', ascending=False).reset_index()
+            df_year_table['Sub-Category'] = df_year_table['Sub-Category'].apply(lambda x: x.title() if isinstance(x, str) else x)
+            
+            figures_list.append({
+                'fig': fig,
+                'title': f'{year} Analysis (Top 10 Universities)',
+                'table': df_year_table
+            })
+else:
+    kpi_result = {'Status': 'University column not found'}
+    figures_list = []
 """
 
 # Q8 CODE
@@ -3673,7 +3662,7 @@ def main():
             "Attendance by University",
             "Workshop Attendance by Sub-Category",
             "Attendance by Student Type (Local vs International)",
-            "Workshop Attendance by Sub-Category & Student Type",
+            "Workshop Attendance by Sub-Category & University",
             "Workshop Attendance by Sub-Category & Academic Major",
             "Attendance by Expected Graduation Period",
             "Registered vs Attended by Registration Timing",
