@@ -3084,8 +3084,9 @@ if 'Workshop Timing_Year' in df_attended.columns and 'Workshop Timing_Month' in 
     
     for col in uni_cols:
         # Format: Count (Percent%)
+        # Capture col as c to avoid scope issues in exec loop
         df_table[col] = df_pivot.apply(
-            lambda row: f"{int(row[col])} ({row[col]/row['Row_Total']*100:.1f}%)" if row['Row_Total'] > 0 else f"{int(row[col])}", 
+            lambda row, c=col: f"{int(row[c])} ({row[c]/row['Row_Total']*100:.1f}%)" if row['Row_Total'] > 0 else f"{int(row[c])}", 
             axis=1
         )
             
