@@ -1304,7 +1304,7 @@ def render_sandbox(q_id, title, default_code, editable_title=False):
                 
                 # Left: Table
                 with c1:
-                    st.markdown("#### 📝 Analysis Report")
+                    # st.markdown("#### 📝 Analysis Report")
                     if table is not None and not table.empty:
                         st.dataframe(table, use_container_width=True, hide_index=True)
                         
@@ -1484,7 +1484,7 @@ df_overall = pd.DataFrame({
 })
 
 figures_list.append({
-    'title': 'Overall Summary',
+    'title': f'Overall Attendance and Attrition for {years.min()} and {years.max()}' if not years.empty and years.min() != years.max() else f'Overall Attendance and Attrition for {years.min()}' if not years.empty else 'Overall Attendance and Attrition',
     'table': df_overall,
     'fig': None
 })
@@ -1513,7 +1513,7 @@ if not yearly_metrics.empty:
         ax_comb.annotate(str(count), (year, count), textcoords="offset points", xytext=(0,-15), ha='center', fontsize=9, weight='bold', color='#d62728')
 
     figures_list.append({
-        'title': 'Combined Trends',
+        'title': f'Combined Trends ({years.min()}-{years.max()})',
         'table': None, # No specific table, relies on overall or subsequent tables
         'fig': fig_comb
     })
@@ -1551,7 +1551,7 @@ if not yearly_metrics.empty:
         ax_att.annotate(str(count), (year, count), textcoords="offset points", xytext=(0,10), ha='center', fontsize=9, weight='bold')
         
     figures_list.append({
-        'title': 'Attendance Analysis',
+        'title': f'Yearly Attendance Analysis ({years.min()}-{years.max()})',
         'table': df_att,
         'fig': fig_att
     })
@@ -1583,7 +1583,7 @@ if not yearly_metrics.empty:
         ax_attr.annotate(str(count), (year, count), textcoords="offset points", xytext=(0,10), ha='center', fontsize=9, weight='bold')
 
     figures_list.append({
-        'title': 'Attrition Analysis',
+        'title': f'Yearly Attrition Analysis ({years.min()}-{years.max()})',
         'table': df_attr,
         'fig': fig_attr
     })
