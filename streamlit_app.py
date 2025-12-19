@@ -2082,27 +2082,22 @@ for year in years:
 # 6. Table: Overall Comparison
 # Pivot to show counts per year
 pivot_counts = df_attended.pivot_table(index='Sub-Category', columns='Workshop Timing_Year', values='SIMID', aggfunc='count', fill_value=0)
-
-# Calculate Total and Rename with Years
-years = sorted(df_attended['Workshop Timing_Year'].unique())
 pivot_counts['Total'] = pivot_counts.sum(axis=1)
 
-if years:
-    min_year = min(years)
-    max_year = max(years)
-    overall_col_name = f'Overall ({min_year}-{max_year})'
-else:
-    overall_col_name = 'Overall'
+# Sort by Total
+pivot_counts = pivot_counts.sort_values('Total', ascending=False)
 
-pivot_counts.rename(columns={'Total': overall_col_name}, inplace=True)
+# Add Overall Percentage
+pivot_counts['Overall %'] = (pivot_counts['Total'] / pivot_counts['Total'].sum() * 100).map('{:.1f}%'.format)
 
 # Calculate % Increase
+years = sorted(df_attended['Workshop Timing_Year'].unique())
 if len(years) >= 2:
     for i in range(len(years) - 1):
         y1, y2 = years[i], years[i+1]
         col_name = f'% Change ({y1}->{y2})'
         
-        # Calculate change using lambda with default args to capture loop variables and avoid closure issues
+        # Use default args to capture y1, y2 values to avoid scope issues in exec()
         pivot_counts[col_name] = pivot_counts.apply(
             lambda row, start=y1, end=y2: (
                 f"{((row[end] - row[start]) / row[start]) * 100:+.1f}%" 
@@ -2112,10 +2107,7 @@ if len(years) >= 2:
             axis=1
         )
 
-# Add Overall Percentage
-pivot_counts['Overall %'] = (pivot_counts[overall_col_name] / pivot_counts[overall_col_name].sum() * 100).map('{:.1f}%'.format)
-
-df_table = pivot_counts.sort_values(overall_col_name, ascending=False).reset_index()
+df_table = pivot_counts.reset_index()
 # Apply Title Case
 df_table['Sub-Category'] = df_table['Sub-Category'].astype(str).str.title()
 """
