@@ -277,6 +277,7 @@ def run_data_ingestion():
                 tax_date_col = next((c for c in tax_df.columns if c.lower() in ['date', 'event date']), None)
                 tax_time_col = next((c for c in tax_df.columns if c.lower() in ['time', 'start time']), None)
                 tax_day_col = next((c for c in tax_df.columns if c.lower() in ['day', 'day of week']), None)
+                tax_trainer_col = next((c for c in tax_df.columns if c.lower() in ['trainer', 'instructor', 'facilitator', 'speaker']), None)
                 
                 if not tax_title_col:
                     tax_title_col = tax_df.columns[0]
@@ -431,6 +432,7 @@ def run_data_ingestion():
                         'subcat': row[tax_subcat_col] if tax_subcat_col else 'Uncategorized',
                         'time': row['Formatted_Time'],
                         'day': row[tax_day_col] if tax_day_col else None, # Store Day
+                        'trainer': row[tax_trainer_col] if tax_trainer_col else None, # Store Trainer
                         'original_title': row[tax_title_col]
                     })
 
@@ -439,7 +441,7 @@ def run_data_ingestion():
 
                 def match_record(row):
                     # Default
-                    res = {'Sub-Category': 'Uncategorized', 'Matched_Time': None, 'Matched_Day': None}
+                    res = {'Sub-Category': 'Uncategorized', 'Matched_Time': None, 'Matched_Day': None, 'Matched_Trainer': None}
                     
                     # Get record details
                     r_tokens = get_tokens(row[att_event_col])
@@ -484,13 +486,14 @@ def run_data_ingestion():
                         res['Sub-Category'] = best_match['subcat']
                         res['Matched_Time'] = best_match['time']
                         res['Matched_Day'] = best_match['day']
+                        res['Matched_Trainer'] = best_match['trainer']
                         
                     return pd.Series(res)
 
                 # Apply matching
                 matched_cols = main_df.apply(match_record, axis=1)
                 # Ensure matched_cols has specific columns in order
-                matched_cols = matched_cols[['Sub-Category', 'Matched_Time', 'Matched_Day']]
+                matched_cols = matched_cols[['Sub-Category', 'Matched_Time', 'Matched_Day', 'Matched_Trainer']]
                 
                 # Save available categories for Manual Resolution
                 if tax_subcat_col:
@@ -553,6 +556,7 @@ def run_data_ingestion():
                     'University Program': ['university program', 'university', 'institution', 'partner university', 'school'],
                     'Program': ['program', 'major', 'course', 'degree', 'study'],
                     'Original_Time': ['time', 'attended time', 'attended_time', 'start time', 'check in time'], # Keep original time separate
+                    'Original_Trainer': ['trainer', 'instructor', 'facilitator', 'speaker', 'presenter'],
                     'Student Name': ['student name', 'name', 'full name', 'participant name', 'attendee name']
                 }
                 
@@ -571,6 +575,10 @@ def run_data_ingestion():
                 # Else, fall back to Original_Time.
                 # Add new standardized 'Time' column for analysis.
                 merged_df['Time'] = merged_df['Matched_Time'].combine_first(merged_df['Original_Time'])
+                
+                # Consolidate Trainer
+                # Prioritize Taxonomy
+                merged_df['Trainer'] = merged_df['Matched_Trainer'].combine_first(merged_df['Original_Trainer'])
                 
                 if 'Matched_Time' in merged_df.columns:
                      st.toast("✓ Synced 'Time' with Taxonomy schedule where dates matched.")
@@ -1079,7 +1087,8 @@ QUESTION_PURPOSES = {
     9: "⏱️ **Examines graduation proximity** to understand when students attend workshops relative to their expected graduation date",
     10: "📅 **Analyzes attrition rates** by comparing registered vs. actual attendance based on how far in advance students registered",
     11: "🏆 **Identifies top participating students** per university to recognize high engagement",
-    12: "📅 **Tracks monthly attendance trends** by university to identify seasonal engagement patterns"
+    12: "📅 **Tracks monthly attendance trends** by university to identify seasonal engagement patterns",
+    13: "👨‍🏫 **Analyzes attendance by Trainer** to identify top-performing instructors"
 }
 
 # --- FUNCTION TO RENDER SANDBOX BLOCKS ---
@@ -1181,7 +1190,8 @@ def render_sandbox(q_id, title, default_code, editable_title=False):
             9: ['Attendance Status', 'Expected Grad Term', 'Grad_Year', 'Grad_Month', 'Grad_YYYY-MM', 'Attended Date'],
             10: ['Attendance Status', 'Registered Date', 'Workshop Timing_Year', 'Workshop Timing_Month', 'Workshop Timing_DayNumber'],
             11: ['Attendance Status', 'University Program', 'Student Name', 'SIMID', 'Display_Name'],
-            12: ['Attendance Status', 'University Program', 'Uni_Clean', 'Uni_Grouped', 'Workshop Timing_Year', 'Workshop Timing_Month']
+            12: ['Attendance Status', 'University Program', 'Uni_Clean', 'Uni_Grouped', 'Workshop Timing_Year', 'Workshop Timing_Month'],
+            13: ['Attendance Status', 'Trainer']
         }
         
         if q_id in attr_map:
@@ -3175,6 +3185,77 @@ else:
 """
 
 
+# Q13 CODE
+code_q13 = """
+# 1. Setup
+figures_list = []
+kpi_result = {}
+
+# 2. Logic: Trainer by Attendance
+# Filter Attended
+df_attended = df[df['Attendance Status'].astype(str).str.lower() == 'attended'].copy()
+
+# Ensure Trainer column exists
+if 'Trainer' in df_attended.columns:
+    # Clean Trainer Name (Title Case, Strip)
+    df_attended['Trainer'] = df_attended['Trainer'].fillna('Unknown').astype(str).str.strip().str.title()
+    
+    # Filter out empty or 'Nan'
+    df_attended = df_attended[~df_attended['Trainer'].isin(['', 'Nan', 'None', 'Unknown'])]
+    
+    # Count by Trainer
+    trainer_counts = df_attended['Trainer'].value_counts().reset_index()
+    trainer_counts.columns = ['Trainer', 'Attendance Count']
+    
+    # Sort
+    trainer_counts = trainer_counts.sort_values('Attendance Count', ascending=True) # Ascending for barh
+    
+    # Calculate Percentage
+    total_attended = trainer_counts['Attendance Count'].sum()
+    trainer_counts['Percentage'] = (trainer_counts['Attendance Count'] / total_attended * 100).map('{:.1f}%'.format)
+    
+    # 3. Table
+    # Sort descending for table
+    df_table = trainer_counts.sort_values('Attendance Count', ascending=False).reset_index(drop=True)
+    
+    # 4. Visualization: Horizontal Bar Chart
+    if not trainer_counts.empty:
+        fig, ax = plt.subplots(figsize=(10, max(6, len(trainer_counts) * 0.4)))
+        
+        # Plot
+        bars = ax.barh(trainer_counts['Trainer'], trainer_counts['Attendance Count'], color='#1f77b4')
+        
+        ax.set_title('Attendance by Trainer', fontsize=14, weight='bold')
+        ax.set_xlabel('Attendance Count', fontsize=12)
+        ax.set_ylabel('Trainer', fontsize=12)
+        ax.grid(axis='x', alpha=0.3, linestyle='--')
+        
+        # Add labels
+        ax.bar_label(bars, padding=3, fontweight='bold')
+        
+        plt.tight_layout()
+        
+        figures_list.append({
+            'fig': fig,
+            'title': 'Attendance by Trainer',
+            'table': df_table
+        })
+        
+        # 5. KPI Stats
+        kpi_result['Total Trainers'] = len(trainer_counts)
+        if not trainer_counts.empty:
+            kpi_result['Top Trainer'] = f"{trainer_counts.iloc[-1]['Trainer']} ({trainer_counts.iloc[-1]['Attendance Count']})"
+            
+    else:
+        kpi_result['Status'] = 'No valid trainer data found.'
+        fig = None
+
+else:
+    kpi_result['Status'] = "Column 'Trainer' not found in dataset."
+    fig = None
+"""
+
+
 # ==============================================================================
 # RENDER ALL BLOCKS
 # ==============================================================================
@@ -3265,7 +3346,7 @@ def generate_ppt(df_global, exclude_uni=False):
     codes_map = {
         1: code_q1, 2: code_q2, 3: code_q3, 4: code_q4, 5: code_q5,
         6: code_q6, 7: code_q7, 8: code_q8, 9: code_q9, 10: code_q10,
-        11: code_q11, 12: code_q12
+        11: code_q11, 12: code_q12, 13: code_q13
     }
     
     titles = [
@@ -3280,10 +3361,11 @@ def generate_ppt(df_global, exclude_uni=False):
         "Attendance by Expected Graduation Period",
         "Registered vs Attended by Registration Timing",
         "Unique Counts & Top Students by University",
-        "Monthly Attendance by University"
+        "Monthly Attendance by University",
+        "Trainer by Attendance"
     ]
 
-    for q_id in range(1, 13):
+    for q_id in range(1, 14):
         q_title = titles[q_id-1]
         code = st.session_state.get(f"edited_code_{q_id}", codes_map[q_id])
         
@@ -3498,14 +3580,15 @@ def main():
             "Attendance by Expected Graduation Period",
             "Registered vs Attended by Registration Timing",
             "Unique Counts & Top Students by University",
-            "Monthly Attendance by University"
+            "Monthly Attendance by University",
+            "Trainer by Attendance"
         ]
         
         # Code Map
-        default_codes = [code_q1, code_q2, code_q3, code_q4, code_q5, code_q6, code_q7, code_q8, code_q9, code_q10, code_q11, code_q12]
+        default_codes = [code_q1, code_q2, code_q3, code_q4, code_q5, code_q6, code_q7, code_q8, code_q9, code_q10, code_q11, code_q12, code_q13]
         
         # Render all questions
-        for i in range(12):
+        for i in range(13):
             q_id = i + 1
             render_sandbox(q_id, titles[i], default_codes[i])
             
