@@ -1088,7 +1088,8 @@ QUESTION_PURPOSES = {
     10: "📅 **Analyzes attrition rates** by comparing registered vs. actual attendance based on how far in advance students registered",
     11: "🏆 **Identifies top participating students** per university to recognize high engagement",
     12: "📅 **Tracks monthly attendance trends** by university to identify seasonal engagement patterns",
-    13: "👨‍🏫 **Analyzes attendance by Trainer** to identify top-performing instructors"
+    13: "👨‍🏫 **Analyzes attendance by Trainer** to identify top-performing instructors",
+    14: "🏷️ **Ranks workshops by attendance** to identify the most popular topics"
 }
 
 # --- FUNCTION TO RENDER SANDBOX BLOCKS ---
@@ -1191,7 +1192,8 @@ def render_sandbox(q_id, title, default_code, editable_title=False):
             10: ['Attendance Status', 'Registered Date', 'Workshop Timing_Year', 'Workshop Timing_Month', 'Workshop Timing_DayNumber'],
             11: ['Attendance Status', 'University Program', 'Student Name', 'SIMID', 'Display_Name'],
             12: ['Attendance Status', 'University Program', 'Uni_Clean', 'Uni_Grouped', 'Workshop Timing_Year', 'Workshop Timing_Month'],
-            13: ['Attendance Status', 'Trainer']
+            13: ['Attendance Status', 'Trainer'],
+            14: ['Attendance Status', 'Event Name', 'Attended Date', 'Workshop Timing_Year']
         }
         
         if q_id in attr_map:
@@ -3259,6 +3261,88 @@ else:
     fig = None
 """
 
+# Q14 CODE
+code_q14 = """
+# 1. Setup
+figures_list = []
+kpi_result = {}
+
+# 2. Logic: Workshop Title by Attendance (Table Only)
+# Filter Attended
+df_attended = df[df['Attendance Status'].astype(str).str.lower() == 'attended'].copy()
+
+# Ensure Columns exist
+if 'Event Name' in df.columns:
+    # --- A. Overall Statistics ---
+    # Group by Event Name
+    # Calculate Attendance Count and Unique Runs (based on Attended Date)
+    # If Attended Date is missing, Runs defaults to 0 or 1? 
+    # Let's count uniques.
+    
+    aggs = {'Attendance Status': 'count'}
+    if 'Attended Date' in df_attended.columns:
+        # Count unique dates as Runs
+        # Note: If multiple sessions on same day, this counts as 1 run. 
+        # Ideally we use Session ID but that's not guaranteed. Date is best proxy.
+        overall_stats = df_attended.groupby('Event Name').agg(
+            Attendance_Count=('Attendance Status', 'count'),
+            Runs=('Attended Date', 'nunique')
+        ).reset_index()
+    else:
+        overall_stats = df_attended.groupby('Event Name').agg(
+            Attendance_Count=('Attendance Status', 'count')
+        ).reset_index()
+        overall_stats['Runs'] = "N/A"
+
+    overall_stats.columns = ['Workshop Title', 'Attendance Count', 'No. of Runs']
+    
+    # Sort Descending by Attendance
+    overall_stats = overall_stats.sort_values('Attendance Count', ascending=False).reset_index(drop=True)
+    
+    # Add Overall to figures
+    figures_list.append({
+        'title': 'Overall Workshop Statistics',
+        'table': overall_stats,
+        'fig': None
+    })
+    
+    # --- B. Yearly Breakdown ---
+    if 'Workshop Timing_Year' in df_attended.columns:
+        # Group by Year and Event Name
+        if 'Attended Date' in df_attended.columns:
+            yearly_stats = df_attended.groupby(['Workshop Timing_Year', 'Event Name']).agg(
+                Attendance_Count=('Attendance Status', 'count'),
+                Runs=('Attended Date', 'nunique')
+            ).reset_index()
+        else:
+            yearly_stats = df_attended.groupby(['Workshop Timing_Year', 'Event Name']).agg(
+                Attendance_Count=('Attendance Status', 'count')
+            ).reset_index()
+            yearly_stats['Runs'] = "N/A"
+            
+        yearly_stats.columns = ['Year', 'Workshop Title', 'Attendance Count', 'No. of Runs']
+        
+        # Sort by Year (desc) then Attendance (desc)
+        yearly_stats = yearly_stats.sort_values(['Year', 'Attendance Count'], ascending=[False, False]).reset_index(drop=True)
+        
+        # Add Yearly to figures
+        figures_list.append({
+            'title': 'Yearly Workshop Breakdown',
+            'table': yearly_stats,
+            'fig': None
+        })
+    
+    # 5. KPI Stats
+    kpi_result['Total Workshops'] = len(overall_stats)
+    if not overall_stats.empty:
+        kpi_result['Top Workshop'] = f"{overall_stats.iloc[0]['Workshop Title']} ({overall_stats.iloc[0]['Attendance Count']})"
+    else:
+        kpi_result['Status'] = 'No attendance data found.'
+
+else:
+    kpi_result['Status'] = "Column 'Event Name' not found."
+"""
+
 
 # ==============================================================================
 # RENDER ALL BLOCKS
@@ -3350,7 +3434,7 @@ def generate_ppt(df_global, exclude_uni=False):
     codes_map = {
         1: code_q1, 2: code_q2, 3: code_q3, 4: code_q4, 5: code_q5,
         6: code_q6, 7: code_q7, 8: code_q8, 9: code_q9, 10: code_q10,
-        11: code_q11, 12: code_q12, 13: code_q13
+        11: code_q11, 12: code_q12, 13: code_q13, 14: code_q14
     }
     
     titles = [
@@ -3366,10 +3450,11 @@ def generate_ppt(df_global, exclude_uni=False):
         "Registered vs Attended by Registration Timing",
         "Unique Counts & Top Students by University",
         "Monthly Attendance by University",
-        "Trainer by Attendance"
+        "Trainer by Attendance",
+        "Workshop Titles by Attendance"
     ]
 
-    for q_id in range(1, 14):
+    for q_id in range(1, 15):
         q_title = titles[q_id-1]
         code = st.session_state.get(f"edited_code_{q_id}", codes_map[q_id])
         
@@ -3585,14 +3670,15 @@ def main():
             "Registered vs Attended by Registration Timing",
             "Unique Counts & Top Students by University",
             "Monthly Attendance by University",
-            "Trainer by Attendance"
+            "Trainer by Attendance",
+            "Workshop Titles by Attendance"
         ]
         
         # Code Map
-        default_codes = [code_q1, code_q2, code_q3, code_q4, code_q5, code_q6, code_q7, code_q8, code_q9, code_q10, code_q11, code_q12, code_q13]
+        default_codes = [code_q1, code_q2, code_q3, code_q4, code_q5, code_q6, code_q7, code_q8, code_q9, code_q10, code_q11, code_q12, code_q13, code_q14]
         
         # Render all questions
-        for i in range(13):
+        for i in range(14):
             q_id = i + 1
             render_sandbox(q_id, titles[i], default_codes[i])
             
