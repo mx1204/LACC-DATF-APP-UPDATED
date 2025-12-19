@@ -766,22 +766,20 @@ def run_data_ingestion():
                 merged_df.drop(columns=['_temp_attended_date'], inplace=True)
                 
                 # Student Type (Local/Intl)
-                # Logic: If Nationality contains 'Singapore', tag Local, else Intl
-                if 'Nationality' in merged_df.columns:
+                # Logic: Use Citizenship column. If NaN or empty, treat as 'Local'
+                if 'Citizenship' in merged_df.columns:
                     def get_student_type(c):
-                        c = str(c).lower()
-                        if 'singapore' in c: return 'Local'
-                        return 'International'
-                    merged_df['Student_Type'] = merged_df['Nationality'].apply(get_student_type)
-                elif 'Citizenship' in merged_df.columns:
-                     # Fallback to Citizenship if Nationality is missing
-                    def get_student_type(c):
-                        c = str(c).lower()
-                        if 'singapore' in c or 'pr' in c: return 'Local'
+                        # If NaN or empty, treat as Local
+                        if pd.isna(c) or str(c).strip() == '':
+                            return 'Local'
+                        c_str = str(c).lower()
+                        if 'singapore' in c_str or 'pr' in c_str:
+                            return 'Local'
                         return 'International'
                     merged_df['Student_Type'] = merged_df['Citizenship'].apply(get_student_type)
                 else:
-                    merged_df['Student_Type'] = 'Unknown'
+                    # Fallback: If Citizenship column doesn't exist, default to 'Local'
+                    merged_df['Student_Type'] = 'Local'
 
                 # --- PROGRAM CLASSIFICATION ---
                 # Categorize academic majors into broad categories with priority-based matching
@@ -2200,17 +2198,20 @@ df_attended = df_attended.dropna(subset=['Workshop Timing_Year'])
 df_attended['Workshop Timing_Year'] = df_attended['Workshop Timing_Year'].astype(int)
 
 # 2. Logic
-# Student Type is already calculated in backend, but user code re-defines it
+# Student Type: Use Citizenship, treat NaN as Local
 def get_student_type(val):
-    val = str(val).lower()
-    if 'singapore' in val:
+    # If NaN or empty, treat as Local
+    if pd.isna(val) or str(val).strip() == '':
+        return 'Local'
+    val_str = str(val).lower()
+    if 'singapore' in val_str or 'pr' in val_str:
         return 'Local'
     return 'International'
 
-if 'Nationality' in df_attended.columns:
-    df_attended['Student_Type'] = df_attended['Nationality'].apply(get_student_type)
-elif 'Citizenship' in df_attended.columns:
+if 'Citizenship' in df_attended.columns:
     df_attended['Student_Type'] = df_attended['Citizenship'].apply(get_student_type)
+else:
+    df_attended['Student_Type'] = 'Local'
 
 # 3. Stats
 kpi_result = {}
@@ -2273,52 +2274,59 @@ for year in years:
             except Exception as e:
                 pass
 
-# 5. Overall Pie Chart
-overall_type_counts = df_attended['Student_Type'].value_counts()
+# 5. Overall Bar Graph (Yearly Comparison)
+# Create a grouped bar chart showing Local vs International for each year
+years = sorted(df_attended['Workshop Timing_Year'].unique())
 
-if not overall_type_counts.empty:
+# Prepare data for bar chart
+bar_data = []
+for year in years:
+    df_year = df_attended[df_attended['Workshop Timing_Year'] == year]
+    year_type_counts = df_year['Student_Type'].value_counts()
+    
+    local_count = year_type_counts.get('Local', 0)
+    intl_count = year_type_counts.get('International', 0)
+    
+    bar_data.append({
+        'Year': int(year),
+        'Local': local_count,
+        'International': intl_count
+    })
+
+df_bar = pd.DataFrame(bar_data)
+
+if not df_bar.empty:
     try:
-        fig, ax = plt.subplots(figsize=(10, 6))
+        fig, ax = plt.subplots(figsize=(12, 6))
         
-        # Same color mapping
-        colors_map = {'Local': '#66b3ff', 'International': '#ff9999'}
-        colors = [colors_map.get(label, '#cccccc') for label in overall_type_counts.index]
+        x = np.arange(len(df_bar))
+        width = 0.35
         
-        # Custom autopct function to hide % when < 1%
-        def autopct_format(pct):
-            return f'{pct:.1f}%' if pct >= 1 else ''
+        bars1 = ax.bar(x - width/2, df_bar['Local'], width, label='Local', color='#66b3ff')
+        bars2 = ax.bar(x + width/2, df_bar['International'], width, label='International', color='#ff9999')
         
-        wedges, texts, autotexts = ax.pie(
-            overall_type_counts.values,
-            labels=None,  # No labels on pie slices, use legend only
-            autopct=autopct_format,
-            startangle=90,
-            colors=colors,
-            pctdistance=0.85,
-            explode=[0.05 if i == 0 else 0 for i in range(len(overall_type_counts))]
-        )
+        ax.set_xlabel('Year', fontsize=12)
+        ax.set_ylabel('Attendance Count', fontsize=12)
+        ax.set_title('Overall: Local vs International Student Attendance by Year', fontsize=14, weight='bold')
+        ax.set_xticks(x)
+        ax.set_xticklabels(df_bar['Year'].astype(int))
+        ax.legend()
+        ax.grid(axis='y', alpha=0.3, linestyle='--')
         
-        # Draw circle for donut style
-        centre_circle = plt.Circle((0,0),0.70,fc='white')
-        fig.gca().add_artist(centre_circle)
+        # Add value labels on bars
+        ax.bar_label(bars1, padding=3, fontweight='bold')
+        ax.bar_label(bars2, padding=3, fontweight='bold')
         
-        ax.set_title('Overall: Local vs International Student Attendance', fontsize=14, weight='bold')
-        ax.legend(
-            overall_type_counts.index,
-            title="Student Type",
-            loc="center left",
-            bbox_to_anchor=(1, 0, 0.5, 1)
-        )
-        ax.axis('equal')
         plt.tight_layout()
         
-        # Create overall table
+        # Create overall summary table
+        overall_type_counts = df_attended['Student_Type'].value_counts()
         df_overall_table = overall_type_counts.reset_index(name='Count').rename(columns={'index': 'Student Type'})
         df_overall_table['Percentage'] = (df_overall_table['Count'] / df_overall_table['Count'].sum() * 100).map('{:.1f}%'.format)
         
         figures_list.append({
             'fig': fig,
-            'title': 'Overall Distribution',
+            'title': 'Overall Distribution (Yearly Comparison)',
             'table': df_overall_table
         })
     except Exception as e:
