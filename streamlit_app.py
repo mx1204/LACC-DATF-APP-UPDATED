@@ -1068,7 +1068,7 @@ EXCLUSION_TERMS = [
 
 # --- PURPOSE DESCRIPTIONS FOR EACH QUESTION ---
 QUESTION_PURPOSES = {
-    1: "📈 **Analyzes overall participation trends** across years to understand workshop engagement patterns",
+    1: "📈 **Analyzes specific attendance and attrition** trends across years to understand engagement and drop-off patterns",
     2: "👥 **Tracks student reach vs. retention** to distinguish between total volume and unique individual engagement",
     3: "🕒 **Studies optimal workshop timing** by analyzing attendance patterns across different days of the week and hours of the day",
     4: "🎓 **Compares university representation** to understand engagement of student in respective partner institutions",
@@ -1427,81 +1427,96 @@ def render_sandbox(q_id, title, default_code, editable_title=False):
 # Q1 CODE
 # Q1 CODE
 code_q1 = """
-# 1. Filter & Extract
-# Ensure we work with 'Attended' status
-df_attended = df[df['Attendance Status'].astype(str).str.lower() == 'attended'].copy()
+# 1. Setup
+figures_list = []
+kpi_result = {}
 
-# Extract Year from Date (as requested)
-if 'Date' in df_attended.columns:
-    df_attended['Workshop Timing_Year'] = pd.to_datetime(df_attended['Date'], errors='coerce').dt.year
-    df_attended = df_attended.dropna(subset=['Workshop Timing_Year'])
-    df_attended['Workshop Timing_Year'] = df_attended['Workshop Timing_Year'].astype(int)
-else:
-    # Fallback if Date is missing but Year exists
-    if 'Workshop Timing_Year' in df_attended.columns:
-        df_attended = df_attended.dropna(subset=['Workshop Timing_Year'])
-        df_attended['Workshop Timing_Year'] = df_attended['Workshop Timing_Year'].astype(int)
+# 2. Logic: Attendance & Attrition (Registered vs Attended)
+# Registered = All records with valid Year
+# Attended = Status 'Attended'
+# Attrition = Registered - Attended
 
-# 2. Logic: Total Attendance by Year
-# Count total records (Attendance) per year
-yearly_counts = df_attended.groupby('Workshop Timing_Year').size()
+# Create working copy
+df_calc = df.copy()
 
-# 3. Stats & Table Construction (same format as Q2)
-total_attendance = len(df_attended)
-years = sorted(yearly_counts.index)
+# Clean Year
+if 'Date' in df_calc.columns:
+    df_calc['Workshop Timing_Year'] = pd.to_datetime(df_calc['Date'], errors='coerce').dt.year
 
-# Build Row Data
-row_data = {
-    "Metric": "Total Attendance",
-    "Total": total_attendance
-}
+df_calc = df_calc.dropna(subset=['Workshop Timing_Year'])
+df_calc['Workshop Timing_Year'] = df_calc['Workshop Timing_Year'].astype(int)
 
-# Add Yearly Counts
-for year in years:
-    row_data[str(year)] = yearly_counts[year]
+# Identify Attended
+df_calc['Is_Attended'] = df_calc['Attendance Status'].astype(str).str.lower() == 'attended'
 
-# Add % Changes between consecutive years
-if len(years) >= 2:
-    for i in range(len(years) - 1):
-        y1, y2 = years[i], years[i+1]
-        c1 = yearly_counts[y1]
-        c2 = yearly_counts[y2]
-        
-        if c1 == 0:
-            pct = "New" if c2 > 0 else "-"
-        else:
-            pct = f"{((c2 - c1) / c1) * 100:+.1f}%"
-        
-        row_data[f"% Change ({y1}->{y2})"] = pct
+# Group by Year
+yearly_metrics = df_calc.groupby('Workshop Timing_Year').agg(
+    Registered=('ID', 'size'),
+    Attended=('Is_Attended', 'sum')
+)
 
-# Create DataFrame
-df_table = pd.DataFrame([row_data])
+# Calculate Attrition Count
+yearly_metrics['Attrition Count'] = yearly_metrics['Registered'] - yearly_metrics['Attended']
 
-# Set KPI Result with Years Compared
-kpi_result = {
-    "Years Compared": ", ".join(map(str, years))
-}
+# 3. Build Table Data (Yearly + Overall)
+# Calculate Overall
+overall_row = pd.DataFrame({
+    'Registered': [yearly_metrics['Registered'].sum()],
+    'Attended': [yearly_metrics['Attended'].sum()],
+    'Attrition Count': [yearly_metrics['Attrition Count'].sum()]
+}, index=['Overall (All Years)'])
 
-# 4. Graph
-if not yearly_counts.empty:
+# Combine: Yearly rows + Overall row
+# We want Year as a column for the dashboard table
+df_yearly_display = yearly_metrics.reset_index()
+df_yearly_display['Year'] = df_yearly_display['Workshop Timing_Year'].astype(str)
+df_yearly_display = df_yearly_display[['Year', 'Registered', 'Attended', 'Attrition Count']]
+
+# Create Overall display row
+overall_display = overall_row.reset_index().rename(columns={'index': 'Year'})
+overall_display['Year'] = overall_display['Year'].apply(lambda x: f"{x} ({df_yearly_display['Year'].min()}-{df_yearly_display['Year'].max()})")
+
+# Final Table
+df_table = pd.concat([df_yearly_display, overall_display], ignore_index=True)
+
+# 4. Visualization: Stacked Bar Chart (Yearly)
+if not yearly_metrics.empty:
     fig, ax = plt.subplots(figsize=(10, 6))
-    ax.plot(yearly_counts.index, yearly_counts.values, marker='o', linewidth=2, markersize=8, color='#1f77b4')
-    ax.set_title('Total Attendance Overview by Year', fontsize=14, weight='bold')
-    ax.set_xlabel('Year', fontsize=11)
-    ax.set_ylabel('Total Attendees', fontsize=11)
+    
+    years = yearly_metrics.index
+    attended = yearly_metrics['Attended']
+    attrition = yearly_metrics['Attrition Count']
+    
+    # Plot Stacked Bar
+    # Bottom: Attended, Top: Attrition
+    p1 = ax.bar(years, attended, label='Attended', color='#2ca02c') # Green
+    p2 = ax.bar(years, attrition, bottom=attended, label='Attrition', color='#d62728') # Red
+    
+    ax.set_title(f'Yearly Attendance & Attrition ({years.min()}-{years.max()})', fontsize=14, weight='bold')
+    ax.set_ylabel('Number of Students', fontsize=12)
+    ax.set_xlabel('Year', fontsize=12)
+    ax.legend()
     ax.grid(True, alpha=0.3, linestyle='--')
-    
-    # Format x-axis to show only integer years
     ax.xaxis.set_major_locator(plt.MaxNLocator(integer=True))
-    
+
     # Add labels
-    for year, count in yearly_counts.items():
-        ax.text(year, count, str(count), ha='center', va='bottom', fontsize=9)
-    
+    ax.bar_label(p1, label_type='center', color='white', fontweight='bold')
+    ax.bar_label(p2, label_type='center', color='white', fontweight='bold')
+    # Add total top label
+    for i, total in enumerate(yearly_metrics['Registered']):
+        ax.text(years[i], total, f"Total: {total}", ha='center', va='bottom', fontsize=9, fontweight='bold')
+
     plt.tight_layout()
+    
+    # Stats for box
+    kpi_result = {
+        'Overall Attendance': overall_row['Attended'].iloc[0],
+        'Overall Attrition': overall_row['Attrition Count'].iloc[0]
+    }
+    
 else:
-    kpi_result["Status"] = "No valid attendance data found with Dates."
     fig = None
+    kpi_result['Status'] = "No valid yearly data found."
 """
 
 
@@ -3093,12 +3108,30 @@ if 'Workshop Timing_Year' in df_attended.columns and 'Workshop Timing_Month' in 
     monthly_counts = monthly_counts.sort_values('Time_Key')
     
     # Pivot for Table
-    df_table = monthly_counts.pivot_table(
+    df_pivot = monthly_counts.pivot_table(
         index=['Time_Key', 'Month_Label'], 
         columns='Uni_Grouped', 
         values='Attendance Count', 
         fill_value=0
-    ).reset_index().sort_values('Time_Key').drop(columns=['Time_Key']) # Drop key from display
+    ).reset_index().sort_values('Time_Key')
+    
+    # Calculate Percentages and Format
+    uni_cols = [c for c in df_pivot.columns if c not in ['Time_Key', 'Month_Label']]
+    
+    # Calculate Row Totals
+    df_pivot['Row_Total'] = df_pivot[uni_cols].sum(axis=1)
+    
+    df_table = df_pivot.copy()
+    
+    for col in uni_cols:
+        # Format: Count (Percent%)
+        df_table[col] = df_pivot.apply(
+            lambda row: f"{int(row[col])} ({row[col]/row['Row_Total']*100:.1f}%)" if row['Row_Total'] > 0 else f"{int(row[col])}", 
+            axis=1
+        )
+            
+    # Final cleanup
+    df_table = df_table.drop(columns=['Time_Key', 'Row_Total'])
     
     # 3. Visualization: Line Graph
     if not monthly_counts.empty:
@@ -3247,7 +3280,7 @@ def generate_ppt(df_global, exclude_uni=False):
     }
     
     titles = [
-        "Overall Attendance Overview",
+        "Attendance and Attrition",
         "Unique Participant Count",
         "Most Popular Days & Time Slots",
         "Attendance by University",
@@ -3467,7 +3500,7 @@ def main():
     elif st.session_state['current_page'] == 2:
         
         titles = [
-            "Overall Attendance Overview",
+            "Attendance and Attrition",
             "Unique Participant Count",
             "Most Popular Days & Time Slots",
             "Attendance by University",
