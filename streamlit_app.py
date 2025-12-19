@@ -1525,6 +1525,32 @@ if not yearly_metrics.empty:
     # Create Combined Statistics Table
     df_combined_table = yearly_metrics[['Registered', 'Attended', 'Attrition Count']].reset_index()
     df_combined_table.columns = ['Year', 'Registered', 'Attended', 'Attrition Count']
+    
+    # Add % Change columns
+    if len(df_combined_table) >= 2:
+        for i in range(len(df_combined_table) - 1):
+            y1, y2 = df_combined_table.iloc[i]['Year'], df_combined_table.iloc[i+1]['Year']
+            
+            # Registered % Change
+            r1 = df_combined_table.iloc[i]['Registered']
+            r2 = df_combined_table.iloc[i+1]['Registered']
+            reg_pct = f"{((r2 - r1) / r1) * 100:+.1f}%" if r1 != 0 else "New"
+            df_combined_table.loc[i, f'% Chg Reg ({int(y1)}->{int(y2)})'] = reg_pct
+            
+            # Attended % Change
+            a1 = df_combined_table.iloc[i]['Attended']
+            a2 = df_combined_table.iloc[i+1]['Attended']
+            att_pct = f"{((a2 - a1) / a1) * 100:+.1f}%" if a1 != 0 else "New"
+            df_combined_table.loc[i, f'% Chg Att ({int(y1)}->{int(y2)})'] = att_pct
+            
+            # Attrition % Change
+            at1 = df_combined_table.iloc[i]['Attrition Count']
+            at2 = df_combined_table.iloc[i+1]['Attrition Count']
+            atr_pct = f"{((at2 - at1) / at1) * 100:+.1f}%" if at1 != 0 else "New"
+            df_combined_table.loc[i, f'% Chg Atr ({int(y1)}->{int(y2)})'] = atr_pct
+        
+        # Fill NaN for last row
+        df_combined_table = df_combined_table.fillna('-')
 
     figures_list.append({
         'title': f'Combined Trends ({years.min()}-{years.max()})',
