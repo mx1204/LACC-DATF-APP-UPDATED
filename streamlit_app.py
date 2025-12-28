@@ -3849,7 +3849,7 @@ def main():
     st.markdown(
         """
         <div style='text-align: center; color: #666; font-size: 12px;'>
-            @Copyright 2025 Learner's Advisory and Career Connect, SIM. Application created by Lee Ming Xuan
+            @Copyright 2025 Learner's Advisory and Career Connect, SIM
         </div>
         """,
         unsafe_allow_html=True
