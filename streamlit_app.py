@@ -2018,7 +2018,7 @@ sns.lineplot(
     y='Count', 
     hue='Uni_Clean', 
     marker='o',
-    palette='viridis', 
+    palette='tab10', 
     hue_order=top_10_unis, # Maintain overall top 10 order
     ax=ax
 )
