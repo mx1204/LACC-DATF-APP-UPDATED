@@ -3684,8 +3684,12 @@ def main():
         # Display in 2 columns
         col1, col2 = st.columns(2)
         
+        # Calculate split point (round up for left column)
+        mid_point = (len(questions_data) + 1) // 2
+        
         for i, (title, description) in enumerate(questions_data):
-            with col1 if i % 2 == 0 else col2:
+            # i < mid_point goes to col1 (Left), rest to col2 (Right)
+            with col1 if i < mid_point else col2:
                 st.markdown(f"**{title}**")
                 st.markdown(f"{description}")
                 st.markdown("")  # Add spacing
