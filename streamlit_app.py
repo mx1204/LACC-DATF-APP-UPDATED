@@ -1488,6 +1488,10 @@ if not yearly_metrics.empty:
     ax_comb.set_ylabel('Count', fontsize=12)
     ax_comb.grid(True, alpha=0.3, linestyle='--')
     ax_comb.xaxis.set_major_locator(plt.MaxNLocator(integer=True))
+    # Extend Y-axis by 15% to prevent overlap
+    if not yearly_metrics[['Attended', 'Attrition Count']].empty:
+        max_val = yearly_metrics[['Attended', 'Attrition Count']].max().max()
+        ax_comb.set_ylim(0, max_val * 1.15)
     ax_comb.legend()
     
     # Add labels for both
@@ -1561,6 +1565,10 @@ if not yearly_metrics.empty:
     ax_att.grid(True, alpha=0.3, linestyle='--')
     ax_att.xaxis.set_major_locator(plt.MaxNLocator(integer=True))
     
+    # Extend Y-axis by 15%
+    if not yearly_metrics['Attended'].empty:
+        ax_att.set_ylim(0, yearly_metrics['Attended'].max() * 1.15)
+    
     # Add labels
     for year, count in zip(years, yearly_metrics['Attended']):
         ax_att.annotate(str(count), (year, count), textcoords="offset points", xytext=(0,10), ha='center', fontsize=9, weight='bold')
@@ -1592,6 +1600,10 @@ if not yearly_metrics.empty:
     ax_attr.set_ylabel('Attrition Count', fontsize=12)
     ax_attr.grid(True, alpha=0.3, linestyle='--')
     ax_attr.xaxis.set_major_locator(plt.MaxNLocator(integer=True))
+    
+    # Extend Y-axis by 15%
+    if not yearly_metrics['Attrition Count'].empty:
+        ax_attr.set_ylim(0, yearly_metrics['Attrition Count'].max() * 1.15)
     
     # Add labels
     for year, count in zip(years, yearly_metrics['Attrition Count']):
@@ -1665,6 +1677,10 @@ ax.grid(True, alpha=0.3, linestyle='--')
 
 # Format x-axis to show only integer years
 ax.xaxis.set_major_locator(plt.MaxNLocator(integer=True))
+
+# Extend Y-axis by 15%
+if not unique_per_year.empty:
+    ax.set_ylim(0, unique_per_year.max() * 1.15)
 
 # Add labels
 for year, count in unique_per_year.items():
@@ -1987,8 +2003,17 @@ sns.barplot(
 )
 ax.set_title('Top 10 Universities: Attendance Comparison by Year')
 ax.set_xlabel('Number of Attendees')
-ax.set_ylabel('University')
-ax.legend(title='Year')
+    ax.set_ylabel('University')
+    
+    # Extend Y-axis (which is X-axis value in logic, but here it's barplot so Y matches count if vertical... wait code says x='Count', y='Uni_Clean' -> Horizontal Bar Plot?)
+    # "sns.barplot(data=..., y='Uni_Clean', x='Count'...)" -> This is Horizontal.
+    # The user said "axis limits". For horizontal bar, the value axis is X.
+    # But wait, original code: ax.set_xlabel('Number of Attendees'), ax.set_ylabel('University').
+    # So we need to extend X-axis.
+    if not uni_year_counts.empty:
+         ax.set_xlim(0, uni_year_counts['Count'].max() * 1.15)
+         
+    ax.legend(title='Year')
 plt.tight_layout()
 
 # 5. Table & Description
@@ -2417,6 +2442,11 @@ if uni_col:
     ax.set_xlabel('Sub-Category')
     ax.set_ylabel('Number of Attendees')
     ax.legend(title='University', bbox_to_anchor=(1.05, 1), loc='upper left')
+    
+    # Extend Y-axis by 15%
+    if not subcat_uni_top.empty:
+        ax.set_ylim(0, subcat_uni_top.max().max() * 1.15)
+        
     ax.set_xticklabels([label.get_text().title() if isinstance(label.get_text(), str) else label.get_text() for label in ax.get_xticklabels()], rotation=45, ha='right')
     plt.tight_layout()
     
@@ -2455,6 +2485,10 @@ if uni_col:
             ax.set_xlabel('Sub-Category')
             ax.set_ylabel('Number of Attendees')
             ax.legend(title='University', bbox_to_anchor=(1.05, 1), loc='upper left')
+            
+            # Extend Y-axis by 15%
+            ax.set_ylim(0, year_counts_top.max().max() * 1.15)
+            
             ax.set_xticklabels([label.get_text().title() if isinstance(label.get_text(), str) else label.get_text() for label in ax.get_xticklabels()], rotation=45, ha='right')
             plt.tight_layout()
             
@@ -2914,6 +2948,11 @@ else:
             ax.set_title(f'{title_prefix}: Registered vs Attended by Registration Timing', fontsize=14, weight='bold')
             ax.set_xticks(x)
             ax.set_xticklabels(grouped.index, rotation=0)
+            
+            # Extend Y-axis by 15%
+            max_val = grouped[['Registered', 'Attended']].max().max()
+            ax.set_ylim(0, max_val * 1.15)
+            
             ax.legend()
             
             # Add labels
@@ -3042,6 +3081,10 @@ if not uni_unique_counts.empty:
     ax.set_title('Top Universities by Unique Student Participation', fontsize=14, weight='bold')
     ax.set_xlabel('Unique Student Count')
     ax.set_ylabel('University')
+    
+    # Extend X-axis by 15% (for horizontal bar plot, X is count)
+    if not top_n_plot.empty:
+        ax.set_xlim(0, top_n_plot.max() * 1.15)
     
     # Add numbers
     for i, v in enumerate(top_n_plot.values):
@@ -3173,6 +3216,11 @@ if 'Workshop Timing_Year' in df_attended.columns and 'Workshop Timing_Month' in 
         ax.set_ylabel('Attendance Count')
         plt.xticks(rotation=45)
         ax.grid(True, alpha=0.3, linestyle='--')
+        
+        # Extend Y-axis by 15%
+        if not monthly_counts.empty:
+            ax.set_ylim(0, monthly_counts['Attendance Count'].max() * 1.15)
+            
         ax.legend(title='University', bbox_to_anchor=(1.02, 1), loc='upper left')
         
         plt.tight_layout()
@@ -3242,6 +3290,10 @@ if 'Trainer' in df_attended.columns:
         ax.set_xlabel('Attendance Count', fontsize=12)
         ax.set_ylabel('Trainer', fontsize=12)
         ax.grid(axis='x', alpha=0.3, linestyle='--')
+        
+        # Extend X-axis by 15% (Horizontal Bar)
+        if not trainer_counts.empty:
+            ax.set_xlim(0, trainer_counts['Attendance Count'].max() * 1.15)
         
         # Add labels
         ax.bar_label(bars, padding=3, fontweight='bold')
