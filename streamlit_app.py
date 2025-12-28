@@ -2011,24 +2011,27 @@ kpi_result = {
 
 # 4. Graph
 fig, ax = plt.subplots(figsize=(12, 8))
-sns.barplot(
+sns.lineplot(
     data=uni_year_counts, 
-    y='Uni_Clean', 
-    x='Count', 
-    hue='Workshop Timing_Year', 
+    x='Workshop Timing_Year', 
+    y='Count', 
+    hue='Uni_Clean', 
+    marker='o',
     palette='viridis', 
-    order=top_10_unis, # Maintain overall top 10 order
+    hue_order=top_10_unis, # Maintain overall top 10 order
     ax=ax
 )
-ax.set_title('Top 10 Universities: Attendance Comparison by Year')
-ax.set_xlabel('Number of Attendees')
-ax.set_ylabel('University')
+ax.set_title('Top 10 Universities: Attendance Trends by Year')
+ax.set_xlabel('Year')
+ax.set_ylabel('Number of Attendees')
+ax.grid(True, alpha=0.3, linestyle='--')
+ax.xaxis.set_major_locator(plt.MaxNLocator(integer=True))
 
-# Extend X-axis by 15% (for horizontal bar plot)
+# Extend Y-axis by 15%
 if not uni_year_counts.empty:
-     ax.set_xlim(0, uni_year_counts['Count'].max() * 1.15)
+     ax.set_ylim(0, uni_year_counts['Count'].max() * 1.15)
      
-ax.legend(title='Year')
+ax.legend(title='University', bbox_to_anchor=(1.02, 1), loc='upper left')
 plt.tight_layout()
 
 # 5. Table & Description
