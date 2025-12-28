@@ -2003,17 +2003,13 @@ sns.barplot(
 )
 ax.set_title('Top 10 Universities: Attendance Comparison by Year')
 ax.set_xlabel('Number of Attendees')
-    ax.set_ylabel('University')
-    
-    # Extend Y-axis (which is X-axis value in logic, but here it's barplot so Y matches count if vertical... wait code says x='Count', y='Uni_Clean' -> Horizontal Bar Plot?)
-    # "sns.barplot(data=..., y='Uni_Clean', x='Count'...)" -> This is Horizontal.
-    # The user said "axis limits". For horizontal bar, the value axis is X.
-    # But wait, original code: ax.set_xlabel('Number of Attendees'), ax.set_ylabel('University').
-    # So we need to extend X-axis.
-    if not uni_year_counts.empty:
-         ax.set_xlim(0, uni_year_counts['Count'].max() * 1.15)
-         
-    ax.legend(title='Year')
+ax.set_ylabel('University')
+
+# Extend X-axis by 15% (for horizontal bar plot)
+if not uni_year_counts.empty:
+     ax.set_xlim(0, uni_year_counts['Count'].max() * 1.15)
+     
+ax.legend(title='Year')
 plt.tight_layout()
 
 # 5. Table & Description
