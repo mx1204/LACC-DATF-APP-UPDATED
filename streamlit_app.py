@@ -2414,9 +2414,20 @@ df_attended = df_attended.dropna(subset=['Workshop Timing_Year'])
 df_attended['Workshop Timing_Year'] = df_attended['Workshop Timing_Year'].astype(int)
 
 # 2. Logic: Sub-Category vs University
-# Use University Program column
+# Create/Clean University Column
 if 'University Program' in df_attended.columns:
-    uni_col = 'University Program'
+    df_attended['Uni_Clean'] = df_attended['University Program'].astype(str).apply(lambda x: x.split(',')[0]).str.title()
+    uni_col = 'Uni_Clean'
+    
+    # Grouping Rule
+    others_group = [
+        'Grenoble Ecole De Management', 
+        'La Trobe University', 
+        'Monash College', 
+        'The University Of Sydney'
+    ]
+    df_attended['Uni_Clean'] = df_attended['Uni_Clean'].apply(lambda x: 'Others' if x in others_group else x)
+    
 elif 'Uni_Clean' in df_attended.columns:
     uni_col = 'Uni_Clean'
 else:
@@ -3037,6 +3048,15 @@ df_attended = df[df['Attendance Status'].astype(str).str.lower() == 'attended'].
 
 # Clean University
 df_attended['Uni_Clean'] = df_attended['University Program'].astype(str).apply(lambda x: x.split(',')[0]).str.title()
+
+# Grouping Rule
+others_group = [
+    'Grenoble Ecole De Management', 
+    'La Trobe University', 
+    'Monash College', 
+    'The University Of Sydney'
+]
+df_attended['Uni_Clean'] = df_attended['Uni_Clean'].apply(lambda x: 'Others' if x in others_group else x)
 
 # Clean Name
 if 'Student Name' not in df.columns:
