@@ -439,10 +439,26 @@ def run_data_ingestion():
                 # F. Execution of Matching
                 st.info("🔍 Matching Attendance with Taxonomy (Strict Date + Title Token Overlap)...")
 
+                # REFINED LOGIC: Create Title -> Trainer Map for Exact Matching (Independent of Date)
+                # This ensures that if we know the Trainer for a specific Workshop Title, we use it 
+                # even if the dates don't perfectly align or are missing.
+                title_trainer_map = {}
+                if tax_trainer_col and tax_title_col:
+                    # Drop rows where Title or Trainer is missing
+                    temp_map = tax_df.dropna(subset=[tax_title_col, tax_trainer_col])
+                    # Create dictionary (Title -> Trainer)
+                    # Use last occurrence or mode? Standard dict(zip) effectively uses last content found.
+                    title_trainer_map = dict(zip(temp_map[tax_title_col], temp_map[tax_trainer_col]))
+
                 def match_record(row):
                     # Default
                     res = {'Sub-Category': 'Uncategorized', 'Matched_Time': None, 'Matched_Day': None, 'Matched_Trainer': None}
                     
+                    # 0. Refined Logic: Exact Title Lookup just for Trainer
+                    # If we recognize the title, pre-fill the Trainer
+                    if row[att_event_col] in title_trainer_map:
+                        res['Matched_Trainer'] = title_trainer_map[row[att_event_col]]
+
                     # Get record details
                     r_tokens = get_tokens(row[att_event_col])
                     
@@ -486,7 +502,10 @@ def run_data_ingestion():
                         res['Sub-Category'] = best_match['subcat']
                         res['Matched_Time'] = best_match['time']
                         res['Matched_Day'] = best_match['day']
-                        res['Matched_Trainer'] = best_match['trainer']
+                        
+                        # Only overwrite Trainer if the Date-Specific match has one
+                        if best_match['trainer']:
+                            res['Matched_Trainer'] = best_match['trainer']
                         
                     return pd.Series(res)
 
