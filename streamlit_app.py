@@ -2265,8 +2265,8 @@ for year in years:
             try:
                 fig, ax = plt.subplots(figsize=(10, 6))
                 
-                # Color mapping: Local = light blue, International = light coral
-                colors_map = {'Local': '#66b3ff', 'International': '#ff9999'}
+                # Color mapping: Local = Blue, International = Pink
+                colors_map = {'Local': '#1f77b4', 'International': '#e377c2'}
                 colors = [colors_map.get(label, '#cccccc') for label in year_type_counts.index]
                 
                 # Custom autopct function to hide % when < 1%
@@ -2337,8 +2337,8 @@ if not df_bar.empty:
         x = np.arange(len(df_bar))
         width = 0.35
         
-        bars1 = ax.bar(x - width/2, df_bar['Local'], width, label='Local', color='#66b3ff')
-        bars2 = ax.bar(x + width/2, df_bar['International'], width, label='International', color='#ff9999')
+        bars1 = ax.bar(x - width/2, df_bar['Local'], width, label='Local', color='#1f77b4')
+        bars2 = ax.bar(x + width/2, df_bar['International'], width, label='International', color='#e377c2')
         
         ax.set_xlabel('Year', fontsize=12)
         ax.set_ylabel('Attendance Count', fontsize=12)
