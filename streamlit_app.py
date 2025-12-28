@@ -5,6 +5,7 @@ import seaborn as sns
 import io
 import re
 import numpy as np
+import traceback
 
 # --- PAGE CONFIGURATION ---
 st.set_page_config(page_title="Career Workshop Analytics Sandbox", layout="wide")
