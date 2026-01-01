@@ -1145,7 +1145,7 @@ def render_sandbox(q_id, title, default_code, editable_title=False):
         run_btn = st.button(f"▶ Run Q{q_id}", key=f"btn_{q_id}", type="primary", use_container_width=True)
     
     # Initialize session state for edited code
-    edited_code_key = f"edited_code_v6_{q_id}"
+    edited_code_key = f"edited_code_v7_{q_id}"
     if edited_code_key not in st.session_state:
         st.session_state[edited_code_key] = default_code
     
@@ -2989,6 +2989,61 @@ if len(years_in_table) >= 2:
             ), 
             axis=1
         )
+
+# 7. Trend Visualization (Line Graph)
+if len(years) >= 1:
+    try:
+        # Prepare growth data
+        df_trend = df_attended.groupby(['Workshop Timing_Year', 'Grad_Quarter']).size().reset_index(name='Attendance Count')
+        
+        # Sort quarters using predefined order
+        df_trend['Grad_Quarter'] = pd.Categorical(df_trend['Grad_Quarter'], categories=quarter_order, ordered=True)
+        df_trend = df_trend.sort_values(['Workshop Timing_Year', 'Grad_Quarter'])
+
+        fig, ax = plt.subplots(figsize=(12, 6))
+        
+        # Use lineplot to show trends
+        sns.lineplot(
+            data=df_trend,
+            x='Workshop Timing_Year',
+            y='Attendance Count',
+            hue='Grad_Quarter',
+            style='Grad_Quarter',
+            markers=True,
+            markersize=10,
+            linewidth=2.5,
+            ax=ax,
+            palette='tab10'
+        )
+        
+        ax.set_title('Yearly Trends: Attendance by Graduation Timing', fontsize=14, weight='bold')
+        ax.set_xlabel('Year', fontsize=12)
+        ax.set_ylabel('Number of Attendees', fontsize=12)
+        ax.grid(True, alpha=0.3, linestyle='--')
+        
+        # Ensure only integer years on X-axis
+        ax.set_xticks(sorted(df_trend['Workshop Timing_Year'].unique()))
+        ax.xaxis.set_major_locator(plt.MaxNLocator(integer=True))
+        
+        # Move legend outside
+        ax.legend(title='Graduation timing', bbox_to_anchor=(1.02, 1), loc='upper left')
+        
+        # Auto-extend Y-axis by 15%
+        if not df_trend.empty:
+            ax.set_ylim(0, df_trend['Attendance Count'].max() * 1.15)
+            
+        plt.tight_layout()
+        
+        # Create a specific yearly table for this graph (Pivot style)
+        df_trend_pivot = df_trend.pivot_table(index='Grad_Quarter', columns='Workshop Timing_Year', values='Attendance Count', fill_value=0).reset_index()
+        
+        figures_list.append({
+            'fig': fig,
+            'title': 'Yearly Trends (Graduation Timing)',
+            'table': df_trend_pivot
+        })
+    except Exception as e:
+        pass
 
 # Reset index for display
 df_table = df_table.reset_index()
