@@ -1145,7 +1145,7 @@ def render_sandbox(q_id, title, default_code, editable_title=False):
         run_btn = st.button(f"▶ Run Q{q_id}", key=f"btn_{q_id}", type="primary", use_container_width=True)
     
     # Initialize session state for edited code
-    edited_code_key = f"edited_code_v5_{q_id}"
+    edited_code_key = f"edited_code_v6_{q_id}"
     if edited_code_key not in st.session_state:
         st.session_state[edited_code_key] = default_code
     
@@ -2677,6 +2677,10 @@ else:
 # 3. Stats
 kpi_result = {}
 figures_list = []
+
+# Final cleanup: Ensure major_col values are capitalized (Title Case)
+if major_col in df_attended.columns:
+    df_attended[major_col] = df_attended[major_col].astype(str).str.strip().str.title()
 
 # Validate Columns
 if 'Sub-Category' not in df_attended.columns:
