@@ -1145,7 +1145,7 @@ def render_sandbox(q_id, title, default_code, editable_title=False):
         run_btn = st.button(f"▶ Run Q{q_id}", key=f"btn_{q_id}", type="primary", use_container_width=True)
     
     # Initialize session state for edited code
-    edited_code_key = f"edited_code_v9_{q_id}"
+    edited_code_key = f"edited_code_v10_{q_id}"
     if edited_code_key not in st.session_state:
         st.session_state[edited_code_key] = default_code
     
@@ -3387,15 +3387,17 @@ if 'Uni_Clean' in df_attended.columns:
             try:
                 fig_trend, ax_trend = plt.subplots(figsize=(12, 6))
                 
-                # Plot trends for Top 10 Universities (by overall unique count)
-                top_10_overall = uni_unique_counts.head(10).index
-                df_trend_plot = uni_year_unique[uni_year_unique['Uni_Clean'].isin(top_10_overall)]
+                # Define hue order: Universities first (sorted by count), 'Others' last
+                plot_unis = [u for u in top_10_overall if u != 'Others']
+                if 'Others' in top_10_overall:
+                    plot_unis.append('Others')
                 
                 sns.lineplot(
                     data=df_trend_plot, 
                     x='Year', 
                     y='Unique_Count', 
                     hue='Uni_Clean', 
+                    hue_order=plot_unis,
                     marker='o',
                     markersize=8,
                     linewidth=2,
