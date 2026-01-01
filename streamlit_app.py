@@ -2416,11 +2416,11 @@ for year in years:
             except Exception as e:
                 pass
 
-# 5. Overall Bar Graph (Yearly Comparison)
-# Create a grouped bar chart showing Local vs International for each year
+# 5. Overall Line Graph (Yearly Comparison)
+# Create a line chart showing Local vs International for each year
 years = sorted(df_attended['Workshop Timing_Year'].unique())
 
-# Prepare data for bar chart
+# Prepare data for line chart
 bar_data = []
 for year in years:
     df_year = df_attended[df_attended['Workshop Timing_Year'] == year]
@@ -2437,39 +2437,48 @@ for year in years:
 
 df_bar = pd.DataFrame(bar_data)
 
-if not df_bar.empty:
+if not df_bar.empty and len(years) >= 1:
     try:
         fig, ax = plt.subplots(figsize=(12, 6))
         
-        x = np.arange(len(df_bar))
-        width = 0.35
-        
-        bars1 = ax.bar(x - width/2, df_bar['Local'], width, label='Local', color='#1f77b4')
-        bars2 = ax.bar(x + width/2, df_bar['International'], width, label='International', color='#e377c2')
+        # Plot Local (Blue)
+        ax.plot(df_bar['Year'], df_bar['Local'], marker='o', linewidth=3, markersize=10, label='Local', color='#1f77b4')
+        # Plot International (Pink)
+        ax.plot(df_bar['Year'], df_bar['International'], marker='s', linewidth=3, markersize=10, label='International', color='#e377c2')
         
         ax.set_xlabel('Year', fontsize=12)
         ax.set_ylabel('Attendance Count', fontsize=12)
-        ax.set_title('Overall: Local vs International Student Attendance by Year', fontsize=14, weight='bold')
-        ax.set_xticks(x)
-        ax.set_xticklabels(df_bar['Year'].astype(int))
+        ax.set_title('Overall Trend: Local vs International Student Attendance by Year', fontsize=14, weight='bold')
+        
+        # Ensure X-axis shows all years only as integers
+        ax.set_xticks(df_bar['Year'].unique())
+        ax.xaxis.set_major_locator(plt.MaxNLocator(integer=True))
+        
         ax.legend()
-        ax.grid(axis='y', alpha=0.3, linestyle='--')
+        ax.grid(True, alpha=0.3, linestyle='--')
         
-        # Add value labels on bars
-        ax.bar_label(bars1, padding=3, fontweight='bold')
-        ax.bar_label(bars2, padding=3, fontweight='bold')
+        # Auto-extend Y-axis by 15%
+        max_y = df_bar[['Local', 'International']].max().max()
+        ax.set_ylim(0, max_y * 1.15)
         
+        # Add labels to points
+        for i, row in df_bar.iterrows():
+            ax.annotate(f"{int(row['Local'])}", (row['Year'], row['Local']), textcoords="offset points", xytext=(0,10), ha='center', fontweight='bold', color='#1f77b4')
+            ax.annotate(f"{int(row['International'])}", (row['Year'], row['International']), textcoords="offset points", xytext=(0,10), ha='center', fontweight='bold', color='#e377c2')
+            
         plt.tight_layout()
         
-        # Create overall summary table
-        overall_type_counts = df_attended['Student_Type'].value_counts()
-        df_overall_table = overall_type_counts.reset_index(name='Count').rename(columns={'index': 'Student Type'})
-        df_overall_table['Percentage'] = (df_overall_table['Count'] / df_overall_table['Count'].sum() * 100).map('{:.1f}%'.format)
+        # Create year-by-year summary table for this graph
+        df_yearly_table = df_bar.copy()
+        df_yearly_table['Total'] = df_yearly_table['Local'] + df_yearly_table['International']
+        
+        # Format table for display
+        df_yearly_table = df_yearly_table.rename(columns={'Year': 'Workshop Year'})
         
         figures_list.append({
             'fig': fig,
-            'title': 'Overall Distribution (Yearly Comparison)',
-            'table': df_overall_table
+            'title': 'Overall Trend (Yearly Comparison)',
+            'table': df_yearly_table
         })
     except Exception as e:
         pass
