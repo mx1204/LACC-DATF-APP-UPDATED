@@ -1145,7 +1145,7 @@ def render_sandbox(q_id, title, default_code, editable_title=False):
         run_btn = st.button(f"▶ Run Q{q_id}", key=f"btn_{q_id}", type="primary", use_container_width=True)
     
     # Initialize session state for edited code
-    edited_code_key = f"edited_code_v13_{q_id}"
+    edited_code_key = f"edited_code_v14_{q_id}"
     if edited_code_key not in st.session_state:
         st.session_state[edited_code_key] = default_code
     
@@ -3378,64 +3378,55 @@ if 'Uni_Clean' in df_attended.columns:
             'table': df_table
         })
 
-        # --- NEW Trend Visualization: Individual University Trends (Subplots) ---
+        # --- NEW Trend Visualization: Combined University Trends ---
         # Identify Top Universities plus Others
         top_10_list = uni_unique_counts.head(10).index.tolist()
         if 'Others' in uni_unique_counts.index and 'Others' not in top_10_list:
             top_10_list.append('Others')
             
-        n_unis = len(top_10_list)
-        if n_unis > 0:
+        # Ensure 'Others' is at the bottom of the hue order
+        plot_order = [u for u in top_10_list if u != 'Others']
+        if 'Others' in top_10_list:
+            plot_order.append('Others')
+
+        if len(top_10_list) > 0:
             try:
-                # Calculate grid size (e.g., 3 columns)
-                ncols = 3
-                nrows = (n_unis + ncols - 1) // ncols
-                fig_trend, axes = plt.subplots(nrows, ncols, figsize=(15, 4 * nrows))
-                
-                # Flatten axes for easy iteration
-                if n_unis == 1:
-                    axes = [axes]
-                else:
-                    axes = axes.flatten()
+                fig_trend, ax_trend = plt.subplots(figsize=(12, 6))
                 
                 # Ensure year is int for plotting
                 df_attended['Year'] = df_attended['Workshop Timing_Year'].dropna().astype(int)
                 uni_year_unique = df_attended.groupby(['Uni_Clean', 'Year'])['SIMID'].nunique().reset_index(name='Unique_Count')
-
-                for i, uni in enumerate(top_10_list):
-                    ax_sub = axes[i]
-                    df_uni_trend = uni_year_unique[uni_year_unique['Uni_Clean'] == uni].sort_values('Year')
-                    
-                    if not df_uni_trend.empty:
-                        sns.lineplot(
-                            data=df_uni_trend, 
-                            x='Year', 
-                            y='Unique_Count', 
-                            marker='o',
-                            markersize=8,
-                            linewidth=2.5,
-                            ax=ax_sub,
-                            color=sns.color_palette("tab10")[i % 10]
-                        )
-                    
-                    ax_sub.set_title(f'{uni}', fontsize=12, weight='bold')
-                    ax_sub.set_xlabel('Year')
-                    ax_sub.set_ylabel('Unique Students')
-                    ax_sub.grid(True, alpha=0.3, linestyle='--')
-                    ax_sub.xaxis.set_major_locator(plt.MaxNLocator(integer=True))
-                    
-                    # Ensure Y-axis starts at 0
-                    if not df_uni_trend.empty:
-                        ax_sub.set_ylim(0, df_uni_trend['Unique_Count'].max() * 1.25)
                 
-                # Hide any empty subplots
-                for j in range(i + 1, len(axes)):
-                    axes[j].axis('off')
-                    
+                # Filter data for selected universities
+                df_trend_plot = uni_year_unique[uni_year_unique['Uni_Clean'].isin(top_10_list)]
+
+                sns.lineplot(
+                    data=df_trend_plot, 
+                    x='Year', 
+                    y='Unique_Count', 
+                    hue='Uni_Clean',
+                    hue_order=plot_order,
+                    marker='o',
+                    markersize=8,
+                    linewidth=2.5,
+                    ax=ax_trend,
+                    palette='tab10'
+                )
+                
+                ax_trend.set_title('Yearly Trends: Unique Participants by University (Combined)', fontsize=14, weight='bold')
+                ax_trend.set_xlabel('Year')
+                ax_trend.set_ylabel('Unique Student Count')
+                ax_trend.grid(True, alpha=0.3, linestyle='--')
+                ax_trend.xaxis.set_major_locator(plt.MaxNLocator(integer=True))
+                
+                # Extend Y-axis starts at 0
+                if not df_trend_plot.empty:
+                    ax_trend.set_ylim(0, df_trend_plot['Unique_Count'].max() * 1.15)
+                
+                ax_trend.legend(title='University', bbox_to_anchor=(1.02, 1), loc='upper left')
                 plt.tight_layout()
                 
                 # Pivot for Table
-                df_trend_plot = uni_year_unique[uni_year_unique['Uni_Clean'].isin(top_10_list)]
                 df_trend_pivot = df_trend_plot.pivot_table(
                     index='Uni_Clean', 
                     columns='Year', 
@@ -3451,7 +3442,7 @@ if 'Uni_Clean' in df_attended.columns:
 
                 figures_list.append({
                     'fig': fig_trend,
-                    'title': 'Individual University Trends (Unique Students)',
+                    'title': 'Combined University Trends (Unique Students)',
                     'table': df_trend_pivot
                 })
             except Exception as e:
