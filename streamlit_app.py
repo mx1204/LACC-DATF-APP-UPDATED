@@ -2510,21 +2510,26 @@ df_attended['Workshop Timing_Year'] = df_attended['Workshop Timing_Year'].astype
 
 # 2. Logic: Sub-Category vs University
 # Create/Clean University Column
+
+# Define university grouping rule (used for both code paths)
+others_group = [
+    'Grenoble Ecole De Management', 
+    'La Trobe University', 
+    'Monash College', 
+    'The University Of Sydney'
+]
+
 if 'University Program' in df_attended.columns:
     df_attended['Uni_Clean'] = df_attended['University Program'].astype(str).apply(lambda x: x.split(',')[0]).str.title()
     uni_col = 'Uni_Clean'
     
-    # Grouping Rule
-    others_group = [
-        'Grenoble Ecole De Management', 
-        'La Trobe University', 
-        'Monash College', 
-        'The University Of Sydney'
-    ]
+    # Apply grouping rule
     df_attended['Uni_Clean'] = df_attended['Uni_Clean'].apply(lambda x: 'Others' if x in others_group else x)
     
 elif 'Uni_Clean' in df_attended.columns:
     uni_col = 'Uni_Clean'
+    # Apply grouping rule to existing Uni_Clean column
+    df_attended['Uni_Clean'] = df_attended['Uni_Clean'].apply(lambda x: 'Others' if x in others_group else x)
 else:
     uni_col = None
 
