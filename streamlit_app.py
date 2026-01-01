@@ -1145,7 +1145,7 @@ def render_sandbox(q_id, title, default_code, editable_title=False):
         run_btn = st.button(f"▶ Run Q{q_id}", key=f"btn_{q_id}", type="primary", use_container_width=True)
     
     # Initialize session state for edited code
-    edited_code_key = f"edited_code_v3_{q_id}"
+    edited_code_key = f"edited_code_v4_{q_id}"
     if edited_code_key not in st.session_state:
         st.session_state[edited_code_key] = default_code
     
@@ -1313,7 +1313,8 @@ def render_sandbox(q_id, title, default_code, editable_title=False):
         
         try:
             # Execute User Code
-            exec(code_input, globals(), local_vars)
+            # Using local_vars as the only namespace to avoid closure/scoping issues with lambdas in exec()
+            exec(code_input, local_vars)
             
             # --- 1. Top Section: Years Compared ---
             results = local_vars.get('kpi_result', {})
@@ -2519,25 +2520,25 @@ df_attended['Workshop Timing_Year'] = df_attended['Workshop Timing_Year'].astype
 # 2. Logic: Sub-Category vs University
 # Create/Clean University Column
 
-# Define university grouping rule (used for both code paths)
+# Define university grouping rule (used for both code paths) - lowercase for robust comparison
 others_group = [
-    'Grenoble Ecole De Management', 
-    'La Trobe University', 
-    'Monash College', 
-    'The University Of Sydney'
+    'grenoble ecole de management', 
+    'la trobe university', 
+    'monash college', 
+    'the university of sydney'
 ]
 
 if 'University Program' in df_attended.columns:
     df_attended['Uni_Clean'] = df_attended['University Program'].astype(str).apply(lambda x: x.split(',')[0]).str.title()
     uni_col = 'Uni_Clean'
     
-    # Apply grouping rule (case-insensitive)
-    df_attended['Uni_Clean'] = df_attended['Uni_Clean'].apply(lambda x: 'Others' if str(x).lower().strip() in others_group else x)
+    # Apply grouping rule (case-insensitive) - using default argument g=others_group for robust exec scoping
+    df_attended['Uni_Clean'] = df_attended['Uni_Clean'].apply(lambda x, g=others_group: 'Others' if str(x).lower().strip() in g else x)
     
 elif 'Uni_Clean' in df_attended.columns:
     uni_col = 'Uni_Clean'
-    # Apply grouping rule (case-insensitive) to existing Uni_Clean column
-    df_attended['Uni_Clean'] = df_attended['Uni_Clean'].apply(lambda x: 'Others' if str(x).lower().strip() in others_group else x)
+    # Apply grouping rule (case-insensitive) to existing Uni_Clean column - using default argument g=others_group
+    df_attended['Uni_Clean'] = df_attended['Uni_Clean'].apply(lambda x, g=others_group: 'Others' if str(x).lower().strip() in g else x)
 else:
     uni_col = None
 
@@ -3154,21 +3155,21 @@ kpi_result = {}
 # Filter Attended
 df_attended = df[df['Attendance Status'].astype(str).str.lower() == 'attended'].copy()
 
-# Define university grouping rule
+# Define university grouping rule - lowercase for robust comparison
 others_group = [
-    'Grenoble Ecole De Management', 
-    'La Trobe University', 
-    'Monash College', 
-    'The University Of Sydney'
+    'grenoble ecole de management', 
+    'la trobe university', 
+    'monash college', 
+    'the university of sydney'
 ]
 
 # Clean University - with error handling (case-insensitive grouping)
 if 'University Program' in df_attended.columns:
     df_attended['Uni_Clean'] = df_attended['University Program'].astype(str).apply(lambda x: x.split(',')[0]).str.title()
-    df_attended['Uni_Clean'] = df_attended['Uni_Clean'].apply(lambda x: 'Others' if str(x).lower().strip() in others_group else x)
+    df_attended['Uni_Clean'] = df_attended['Uni_Clean'].apply(lambda x, g=others_group: 'Others' if str(x).lower().strip() in g else x)
 elif 'Uni_Clean' in df_attended.columns:
-    # Apply grouping rule (case-insensitive) to existing Uni_Clean column
-    df_attended['Uni_Clean'] = df_attended['Uni_Clean'].apply(lambda x: 'Others' if str(x).lower().strip() in others_group else x)
+    # Apply grouping rule (case-insensitive) to existing Uni_Clean column - using default argument g=others_group
+    df_attended['Uni_Clean'] = df_attended['Uni_Clean'].apply(lambda x, g=others_group: 'Others' if str(x).lower().strip() in g else x)
 else:
     # No university column available
     kpi_result['Status'] = "No university column found in data."
@@ -3265,12 +3266,12 @@ df_attended = df[df['Attendance Status'].astype(str).str.lower() == 'attended'].
 df_attended['Uni_Clean'] = df_attended['University Program'].astype(str).apply(lambda x: x.split(',')[0]).str.title()
 
 # Apply Grouping Rule
-# Group specific universities into "Others"
+# Define university grouping rule - lowercase for robust comparison
 others_group = [
-    'Grenoble Ecole De Management', 
-    'La Trobe University', 
-    'Monash College', 
-    'The University Of Sydney'
+    'grenoble ecole de management', 
+    'la trobe university', 
+    'monash college', 
+    'the university of sydney'
 ]
 
 df_attended['Uni_Grouped'] = df_attended['Uni_Clean'].apply(
