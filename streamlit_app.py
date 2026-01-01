@@ -1145,7 +1145,7 @@ def render_sandbox(q_id, title, default_code, editable_title=False):
         run_btn = st.button(f"▶ Run Q{q_id}", key=f"btn_{q_id}", type="primary", use_container_width=True)
     
     # Initialize session state for edited code
-    edited_code_key = f"edited_code_v10_{q_id}"
+    edited_code_key = f"edited_code_v11_{q_id}"
     if edited_code_key not in st.session_state:
         st.session_state[edited_code_key] = default_code
     
@@ -3353,19 +3353,23 @@ if 'Uni_Clean' in df_attended.columns:
         # Plot
         top_n_plot = uni_unique_counts.head(15) # Show top 15 for plotting clarity if many
         
-        sns.barplot(x=top_n_plot.values, y=top_n_plot.index, palette='viridis', ax=ax)
+        # Swapping axes: Universities on X, Counts on Y (Vertical Bar Chart)
+        sns.barplot(x=top_n_plot.index, y=top_n_plot.values, palette='viridis', ax=ax)
         
         ax.set_title('Top Universities by Unique Student Participation', fontsize=14, weight='bold')
-        ax.set_xlabel('Unique Student Count')
-        ax.set_ylabel('University')
+        ax.set_xlabel('University')
+        ax.set_ylabel('Unique Student Count')
         
-        # Extend X-axis by 15% (for horizontal bar plot, X is count)
+        # Rotate university labels for readability
+        ax.set_xticklabels(ax.get_xticklabels(), rotation=45, ha='right')
+        
+        # Extend Y-axis by 15% (for vertical bar plot, Y is count)
         if not top_n_plot.empty:
-            ax.set_xlim(0, top_n_plot.max() * 1.15)
+            ax.set_ylim(0, top_n_plot.max() * 1.15)
         
-        # Add numbers
+        # Add numbers above bars
         for i, v in enumerate(top_n_plot.values):
-            ax.text(v + 0.1, i, str(v), color='black', va='center', fontweight='bold')
+            ax.text(i, v + 0.1, str(v), color='black', ha='center', fontweight='bold')
             
         plt.tight_layout()
         
