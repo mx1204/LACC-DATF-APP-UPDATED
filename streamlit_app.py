@@ -2197,6 +2197,83 @@ for year in years:
             except Exception as e:
                 pass
 
+# 5.5. Line Graph: Sub-Category Trends Across Years
+# Show how each sub-category's attendance changes over time
+years = sorted(df_attended['Workshop Timing_Year'].unique())
+
+if len(years) >= 2:  # Only create line graph if we have multiple years
+    try:
+        # Aggregate data by Year and Sub-Category
+        trend_data = df_attended.groupby(['Workshop Timing_Year', 'Sub-Category']).size().reset_index(name='Count')
+        
+        # Get top sub-categories by total count for better visualization
+        top_subcats = df_attended['Sub-Category'].value_counts().head(10).index.tolist()
+        trend_data_filtered = trend_data[trend_data['Sub-Category'].isin(top_subcats)]
+        
+        if not trend_data_filtered.empty:
+            fig, ax = plt.subplots(figsize=(14, 8))
+            
+            # Plot line for each sub-category
+            sns.lineplot(
+                data=trend_data_filtered,
+                x='Workshop Timing_Year',
+                y='Count',
+                hue='Sub-Category',
+                marker='o',
+                linewidth=2.5,
+                markersize=8,
+                palette='tab10',
+                ax=ax
+            )
+            
+            ax.set_title('Sub-Category Attendance Trends Across Years', fontsize=14, weight='bold')
+            ax.set_xlabel('Year', fontsize=12)
+            ax.set_ylabel('Attendance Count', fontsize=12)
+            ax.grid(True, alpha=0.3, linestyle='--')
+            ax.xaxis.set_major_locator(plt.MaxNLocator(integer=True))
+            
+            # Extend Y-axis by 15%
+            if not trend_data_filtered.empty:
+                ax.set_ylim(0, trend_data_filtered['Count'].max() * 1.15)
+            
+            # Improve legend
+            ax.legend(
+                title='Sub-Category',
+                bbox_to_anchor=(1.02, 1),
+                loc='upper left',
+                labels=[s.title() if isinstance(s, str) else s for s in top_subcats]
+            )
+            
+            plt.tight_layout()
+            
+            # Create table for line graph data
+            # Pivot to show counts per year for each sub-category
+            trend_table = trend_data_filtered.pivot_table(
+                index='Sub-Category',
+                columns='Workshop Timing_Year',
+                values='Count',
+                fill_value=0
+            )
+            
+            # Add Total column
+            trend_table['Total'] = trend_table.sum(axis=1)
+            
+            # Sort by Total
+            trend_table = trend_table.sort_values('Total', ascending=False)
+            
+            # Reset index and apply Title Case
+            df_trend_table = trend_table.reset_index()
+            df_trend_table['Sub-Category'] = df_trend_table['Sub-Category'].astype(str).str.title()
+            
+            figures_list.append({
+                'fig': fig,
+                'title': 'Yearly Trends (Top 10 Sub-Categories)',
+                'table': df_trend_table
+            })
+    except Exception as e:
+        pass
+
+
 # 6. Table: Overall Comparison
 # Pivot to show counts per year
 pivot_counts = df_attended.pivot_table(index='Sub-Category', columns='Workshop Timing_Year', values='SIMID', aggfunc='count', fill_value=0)
