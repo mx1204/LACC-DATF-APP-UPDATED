@@ -1145,7 +1145,7 @@ def render_sandbox(q_id, title, default_code, editable_title=False):
         run_btn = st.button(f"▶ Run Q{q_id}", key=f"btn_{q_id}", type="primary", use_container_width=True)
     
     # Initialize session state for edited code
-    edited_code_key = f"edited_code_v4_{q_id}"
+    edited_code_key = f"edited_code_v5_{q_id}"
     if edited_code_key not in st.session_state:
         st.session_state[edited_code_key] = default_code
     
@@ -2601,7 +2601,7 @@ if uni_col:
     
     figures_list.append({
         'fig': fig,
-        'title': 'Overall Analysis (Top 10 Universities)',
+        'title': 'Overall Analysis',
         'table': df_overall
     })
     
@@ -2643,7 +2643,7 @@ if uni_col:
             
             figures_list.append({
                 'fig': fig,
-                'title': f'{year} Analysis (Top 10 Universities)',
+                'title': f'{year} Analysis',
                 'table': df_year_table
             })
 else:
