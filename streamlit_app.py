@@ -2258,8 +2258,9 @@ if 'Student_Type' not in df_attended.columns:
     else:
         df_attended['Student_Type'] = 'Local'
 
-    # Force standardization to Title Case (Local, International) to match color map keys
-    df_attended['Student_Type'] = df_attended['Student_Type'].astype(str).str.strip().str.title()
+# CRITICAL: Always normalize Student_Type to Title Case to match color map keys
+# This ensures colors work correctly even if Student_Type was already in the dataframe
+df_attended['Student_Type'] = df_attended['Student_Type'].astype(str).str.strip().str.title()
 
 # Debug: Show Student_Type distribution
 student_type_counts = df_attended['Student_Type'].value_counts()
