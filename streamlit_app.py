@@ -1145,7 +1145,7 @@ def render_sandbox(q_id, title, default_code, editable_title=False):
         run_btn = st.button(f"▶ Run Q{q_id}", key=f"btn_{q_id}", type="primary", use_container_width=True)
     
     # Initialize session state for edited code
-    edited_code_key = f"edited_code_v2_{q_id}"
+    edited_code_key = f"edited_code_v3_{q_id}"
     if edited_code_key not in st.session_state:
         st.session_state[edited_code_key] = default_code
     
@@ -1302,12 +1302,12 @@ def render_sandbox(q_id, title, default_code, editable_title=False):
             'fig': None,
             'df_table': None,
             'figures_list': [],
-            # Fail-safe: Provide others_group directly in the environment
+            # Fail-safe: Provide others_group (LOWERCASE) directly in the environment
             'others_group': [
-                'Grenoble Ecole De Management', 
-                'La Trobe University', 
-                'Monash College', 
-                'The University Of Sydney'
+                'grenoble ecole de management', 
+                'la trobe university', 
+                'monash college', 
+                'the university of sydney'
             ]
         }
         
@@ -2531,13 +2531,13 @@ if 'University Program' in df_attended.columns:
     df_attended['Uni_Clean'] = df_attended['University Program'].astype(str).apply(lambda x: x.split(',')[0]).str.title()
     uni_col = 'Uni_Clean'
     
-    # Apply grouping rule
-    df_attended['Uni_Clean'] = df_attended['Uni_Clean'].apply(lambda x: 'Others' if x in others_group else x)
+    # Apply grouping rule (case-insensitive)
+    df_attended['Uni_Clean'] = df_attended['Uni_Clean'].apply(lambda x: 'Others' if str(x).lower().strip() in others_group else x)
     
 elif 'Uni_Clean' in df_attended.columns:
     uni_col = 'Uni_Clean'
-    # Apply grouping rule to existing Uni_Clean column
-    df_attended['Uni_Clean'] = df_attended['Uni_Clean'].apply(lambda x: 'Others' if x in others_group else x)
+    # Apply grouping rule (case-insensitive) to existing Uni_Clean column
+    df_attended['Uni_Clean'] = df_attended['Uni_Clean'].apply(lambda x: 'Others' if str(x).lower().strip() in others_group else x)
 else:
     uni_col = None
 
@@ -3162,13 +3162,13 @@ others_group = [
     'The University Of Sydney'
 ]
 
-# Clean University - with error handling
+# Clean University - with error handling (case-insensitive grouping)
 if 'University Program' in df_attended.columns:
     df_attended['Uni_Clean'] = df_attended['University Program'].astype(str).apply(lambda x: x.split(',')[0]).str.title()
-    df_attended['Uni_Clean'] = df_attended['Uni_Clean'].apply(lambda x: 'Others' if x in others_group else x)
+    df_attended['Uni_Clean'] = df_attended['Uni_Clean'].apply(lambda x: 'Others' if str(x).lower().strip() in others_group else x)
 elif 'Uni_Clean' in df_attended.columns:
-    # Apply grouping rule to existing Uni_Clean column
-    df_attended['Uni_Clean'] = df_attended['Uni_Clean'].apply(lambda x: 'Others' if x in others_group else x)
+    # Apply grouping rule (case-insensitive) to existing Uni_Clean column
+    df_attended['Uni_Clean'] = df_attended['Uni_Clean'].apply(lambda x: 'Others' if str(x).lower().strip() in others_group else x)
 else:
     # No university column available
     kpi_result['Status'] = "No university column found in data."
@@ -3274,7 +3274,7 @@ others_group = [
 ]
 
 df_attended['Uni_Grouped'] = df_attended['Uni_Clean'].apply(
-    lambda x, g=others_group: 'Others' if x in g else x
+    lambda x, g=others_group: 'Others' if str(x).lower().strip() in g else x
 )
 
 # Date Construction (YYYY-MM)
