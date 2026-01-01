@@ -3146,88 +3146,101 @@ kpi_result = {}
 # Filter Attended
 df_attended = df[df['Attendance Status'].astype(str).str.lower() == 'attended'].copy()
 
-# Clean University
-df_attended['Uni_Clean'] = df_attended['University Program'].astype(str).apply(lambda x: x.split(',')[0]).str.title()
-
-# Grouping Rule
+# Define university grouping rule
 others_group = [
     'Grenoble Ecole De Management', 
     'La Trobe University', 
     'Monash College', 
     'The University Of Sydney'
 ]
-df_attended['Uni_Clean'] = df_attended['Uni_Clean'].apply(lambda x: 'Others' if x in others_group else x)
 
-# Clean Name
-if 'Student Name' not in df.columns:
-    df_attended['Display_Name'] = df_attended['SIMID']
+# Clean University - with error handling
+if 'University Program' in df_attended.columns:
+    df_attended['Uni_Clean'] = df_attended['University Program'].astype(str).apply(lambda x: x.split(',')[0]).str.title()
+    df_attended['Uni_Clean'] = df_attended['Uni_Clean'].apply(lambda x: 'Others' if x in others_group else x)
+elif 'Uni_Clean' in df_attended.columns:
+    # Apply grouping rule to existing Uni_Clean column
+    df_attended['Uni_Clean'] = df_attended['Uni_Clean'].apply(lambda x: 'Others' if x in others_group else x)
 else:
-    df_attended['Display_Name'] = df_attended['Student Name'].fillna(df_attended['SIMID'])
+    # No university column available
+    kpi_result['Status'] = "No university column found in data."
+    figures_list = []
+    df_table = pd.DataFrame([{"Error": kpi_result['Status']}])
 
-# Group by University - Unique Count of SIMID
-uni_unique_counts = df_attended.groupby('Uni_Clean')['SIMID'].nunique().sort_values(ascending=False)
+# Only proceed if we have university data
+if 'Uni_Clean' in df_attended.columns:
 
-# Top 10 Students per University
-top_students_data = []
+    # Clean Name
+    if 'Student Name' not in df.columns:
+        df_attended['Display_Name'] = df_attended['SIMID']
+    else:
+        df_attended['Display_Name'] = df_attended['Student Name'].fillna(df_attended['SIMID'])
 
-# Iterate over each university present
-for uni in uni_unique_counts.index:
-    # Filter for this uni
-    df_uni = df_attended[df_attended['Uni_Clean'] == uni]
-    
-    # Count attendance per student
-    student_counts = df_uni['Display_Name'].value_counts()
-    
-    # Get Top 10
-    top_10 = student_counts.head(10)
-    
-    # Format list: "Name (Count)"
-    top_list_str = ", ".join([f"{name} ({count})" for name, count in top_10.items()])
-    
-    top_students_data.append({
-        'University': uni,
-        'Unique Students': uni_unique_counts[uni],
-        'Top 10 High Attendance Students': top_list_str
-    })
+    # Group by University - Unique Count of SIMID
+    uni_unique_counts = df_attended.groupby('Uni_Clean')['SIMID'].nunique().sort_values(ascending=False)
 
-df_table = pd.DataFrame(top_students_data)
+    # Top 10 Students per University
+    top_students_data = []
 
-# 3. Visualization: Bar Count of Unique Students
-if not uni_unique_counts.empty:
-    fig, ax = plt.subplots(figsize=(12, 8))
-    
-    # Plot
-    top_n_plot = uni_unique_counts.head(15) # Show top 15 for plotting clarity if many
-    
-    sns.barplot(x=top_n_plot.values, y=top_n_plot.index, palette='viridis', ax=ax)
-    
-    ax.set_title('Top Universities by Unique Student Participation', fontsize=14, weight='bold')
-    ax.set_xlabel('Unique Student Count')
-    ax.set_ylabel('University')
-    
-    # Extend X-axis by 15% (for horizontal bar plot, X is count)
-    if not top_n_plot.empty:
-        ax.set_xlim(0, top_n_plot.max() * 1.15)
-    
-    # Add numbers
-    for i, v in enumerate(top_n_plot.values):
-        ax.text(v + 0.1, i, str(v), color='black', va='center', fontweight='bold')
+    # Iterate over each university present
+    for uni in uni_unique_counts.index:
+        # Filter for this uni
+        df_uni = df_attended[df_attended['Uni_Clean'] == uni]
         
-    plt.tight_layout()
-    
-    figures_list.append({
-        'fig': fig,
-        'title': 'Unique Participants by University',
-        'table': df_table
-    })
-else:
-    kpi_result['Status'] = 'No attendance data found.'
-    fig = None
+        # Count attendance per student
+        student_counts = df_uni['Display_Name'].value_counts()
+        
+        # Get Top 10
+        top_10 = student_counts.head(10)
+        
+        # Format list: "Name (Count)"
+        top_list_str = ", ".join([f"{name} ({count})" for name, count in top_10.items()])
+        
+        top_students_data.append({
+            'University': uni,
+            'Unique Students': uni_unique_counts[uni],
+            'Top 10 High Attendance Students': top_list_str
+        })
 
-# 4. KPI Stats
-kpi_result['Total Unique Students'] = df_attended['SIMID'].nunique()
-if not uni_unique_counts.empty:
-    kpi_result['Top University'] = f"{uni_unique_counts.index[0]} ({uni_unique_counts.iloc[0]})"
+    df_table = pd.DataFrame(top_students_data)
+
+    # 3. Visualization: Bar Count of Unique Students
+    if not uni_unique_counts.empty:
+        fig, ax = plt.subplots(figsize=(12, 8))
+        
+        # Plot
+        top_n_plot = uni_unique_counts.head(15) # Show top 15 for plotting clarity if many
+        
+        sns.barplot(x=top_n_plot.values, y=top_n_plot.index, palette='viridis', ax=ax)
+        
+        ax.set_title('Top Universities by Unique Student Participation', fontsize=14, weight='bold')
+        ax.set_xlabel('Unique Student Count')
+        ax.set_ylabel('University')
+        
+        # Extend X-axis by 15% (for horizontal bar plot, X is count)
+        if not top_n_plot.empty:
+            ax.set_xlim(0, top_n_plot.max() * 1.15)
+        
+        # Add numbers
+        for i, v in enumerate(top_n_plot.values):
+            ax.text(v + 0.1, i, str(v), color='black', va='center', fontweight='bold')
+            
+        plt.tight_layout()
+        
+        figures_list.append({
+            'fig': fig,
+            'title': 'Unique Participants by University',
+            'table': df_table
+        })
+    else:
+        kpi_result['Status'] = 'No attendance data found.'
+        fig = None
+
+    # 4. KPI Stats
+    kpi_result['Total Unique Students'] = df_attended['SIMID'].nunique()
+    if not uni_unique_counts.empty:
+        kpi_result['Top University'] = f"{uni_unique_counts.index[0]} ({uni_unique_counts.iloc[0]})"
+# End of 'Uni_Clean' check
 """
 
 
