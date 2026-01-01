@@ -1145,7 +1145,7 @@ def render_sandbox(q_id, title, default_code, editable_title=False):
         run_btn = st.button(f"▶ Run Q{q_id}", key=f"btn_{q_id}", type="primary", use_container_width=True)
     
     # Initialize session state for edited code
-    edited_code_key = f"edited_code_v11_{q_id}"
+    edited_code_key = f"edited_code_v12_{q_id}"
     if edited_code_key not in st.session_state:
         st.session_state[edited_code_key] = default_code
     
@@ -3008,8 +3008,7 @@ if len(years) >= 1:
             x='Workshop Timing_Year',
             y='Attendance Count',
             hue='Grad_Quarter',
-            style='Grad_Quarter',
-            markers=True,
+            marker='o',
             markersize=10,
             linewidth=2.5,
             ax=ax,
