@@ -2005,6 +2005,17 @@ df_attended['Workshop Timing_Year'] = df_attended['Workshop Timing_Year'].astype
 # Clean University Name (take first part before comma if applicable) and Title Case
 df_attended['Uni_Clean'] = df_attended['University Program'].astype(str).apply(lambda x: x.split(',')[0]).str.title()
 
+# Define university grouping rule - lowercase for robust comparison
+others_group = [
+    'grenoble ecole de management', 
+    'la trobe university', 
+    'monash college', 
+    'the university of sydney'
+]
+
+# Apply grouping rule (case-insensitive) - using default argument g=others_group for robust exec scoping
+df_attended['Uni_Clean'] = df_attended['Uni_Clean'].apply(lambda x, g=others_group: 'Others' if str(x).lower().strip() in g else x)
+
 # Identify Top 10 Universities Overall for Graph
 top_10_unis = df_attended['Uni_Clean'].value_counts().head(10).index
 df_top_10 = df_attended[df_attended['Uni_Clean'].isin(top_10_unis)].copy()
