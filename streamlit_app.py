@@ -1145,7 +1145,7 @@ def render_sandbox(q_id, title, default_code, editable_title=False):
         run_btn = st.button(f"▶ Run Q{q_id}", key=f"btn_{q_id}", type="primary", use_container_width=True)
     
     # Initialize session state for edited code
-    edited_code_key = f"edited_code_v7_{q_id}"
+    edited_code_key = f"edited_code_v8_{q_id}"
     if edited_code_key not in st.session_state:
         st.session_state[edited_code_key] = default_code
     
@@ -3210,6 +3210,60 @@ else:
                         })
                 except Exception as e:
                     pass
+
+        # --- 5. Trend Visualization (Line Graph) ---
+        if len(years) >= 1:
+            try:
+                # Prepare trend data (Attended Status only)
+                df_trend = df_analysis[df_analysis['Status_Simple'] == 'Attended'].groupby(['Workshop Timing_Year', 'Reg_Timing']).size().reset_index(name='Attendance Count')
+                
+                # Sort Reg_Timing using predefined order
+                df_trend['Reg_Timing'] = pd.Categorical(df_trend['Reg_Timing'], categories=timing_order, ordered=True)
+                df_trend = df_trend.sort_values(['Workshop Timing_Year', 'Reg_Timing'])
+
+                fig, ax = plt.subplots(figsize=(12, 6))
+                
+                # Use lineplot to show trends
+                sns.lineplot(
+                    data=df_trend,
+                    x='Workshop Timing_Year',
+                    y='Attendance Count',
+                    hue='Reg_Timing',
+                    marker='o',
+                    markersize=10,
+                    linewidth=2.5,
+                    ax=ax,
+                    palette='tab10'
+                )
+                
+                ax.set_title('Yearly Trends: Attendance by Registration Timing', fontsize=14, weight='bold')
+                ax.set_xlabel('Year', fontsize=12)
+                ax.set_ylabel('Number of Attendees', fontsize=12)
+                ax.grid(True, alpha=0.3, linestyle='--')
+                
+                # Ensure only integer years on X-axis
+                ax.set_xticks(sorted(df_trend['Workshop Timing_Year'].unique()))
+                ax.xaxis.set_major_locator(plt.MaxNLocator(integer=True))
+                
+                # Move legend outside
+                ax.legend(title='Registration Timing', bbox_to_anchor=(1.02, 1), loc='upper left')
+                
+                # Auto-extend Y-axis by 15%
+                if not df_trend.empty:
+                    ax.set_ylim(0, df_trend['Attendance Count'].max() * 1.15)
+                    
+                plt.tight_layout()
+                
+                # Create a specific yearly table for this graph (Pivot style)
+                df_trend_pivot = df_trend.pivot_table(index='Reg_Timing', columns='Workshop Timing_Year', values='Attendance Count', fill_value=0).reset_index()
+                
+                figures_list.append({
+                    'fig': fig,
+                    'title': 'Yearly Trends (Registration Timing)',
+                    'table': df_trend_pivot
+                })
+            except Exception as e:
+                pass
 
         # KPI Stats
         total_recs = len(df_analysis)
