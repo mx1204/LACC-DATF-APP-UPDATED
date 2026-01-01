@@ -1145,7 +1145,7 @@ def render_sandbox(q_id, title, default_code, editable_title=False):
         run_btn = st.button(f"▶ Run Q{q_id}", key=f"btn_{q_id}", type="primary", use_container_width=True)
     
     # Initialize session state for edited code
-    edited_code_key = f"edited_code_v8_{q_id}"
+    edited_code_key = f"edited_code_v9_{q_id}"
     if edited_code_key not in st.session_state:
         st.session_state[edited_code_key] = default_code
     
@@ -3374,6 +3374,62 @@ if 'Uni_Clean' in df_attended.columns:
             'title': 'Unique Participants by University',
             'table': df_table
         })
+
+        # --- NEW Trend Visualization: Unique Students per Year ---
+        # Get Workshop Timing_Year cleaned (already partially handled in earlier logic or via df)
+        # Ensure year is int
+        df_attended['Year'] = df_attended['Workshop Timing_Year'].dropna().astype(int)
+        
+        # Aggregate unique counts of SIMID by University and Year
+        uni_year_unique = df_attended.groupby(['Uni_Clean', 'Year'])['SIMID'].nunique().reset_index(name='Unique_Count')
+        
+        if not uni_year_unique.empty:
+            try:
+                fig_trend, ax_trend = plt.subplots(figsize=(12, 6))
+                
+                # Plot trends for Top 10 Universities (by overall unique count)
+                top_10_overall = uni_unique_counts.head(10).index
+                df_trend_plot = uni_year_unique[uni_year_unique['Uni_Clean'].isin(top_10_overall)]
+                
+                sns.lineplot(
+                    data=df_trend_plot, 
+                    x='Year', 
+                    y='Unique_Count', 
+                    hue='Uni_Clean', 
+                    marker='o',
+                    markersize=8,
+                    linewidth=2,
+                    palette='tab10',
+                    ax=ax_trend
+                )
+                
+                ax_trend.set_title('Yearly Trends: Unique Participants by University (Top 10)', fontsize=14, weight='bold')
+                ax_trend.set_xlabel('Year')
+                ax_trend.set_ylabel('Unique Student Count')
+                ax_trend.grid(True, alpha=0.3, linestyle='--')
+                ax_trend.xaxis.set_major_locator(plt.MaxNLocator(integer=True))
+                
+                # Extend Y-axis
+                ax_trend.set_ylim(0, df_trend_plot['Unique_Count'].max() * 1.15)
+                
+                ax_trend.legend(title='University', bbox_to_anchor=(1.02, 1), loc='upper left')
+                plt.tight_layout()
+                
+                # Pivot for Table
+                df_trend_pivot = df_trend_plot.pivot_table(
+                    index='Uni_Clean', 
+                    columns='Year', 
+                    values='Unique_Count', 
+                    fill_value=0
+                ).reset_index()
+                
+                figures_list.append({
+                    'fig': fig_trend,
+                    'title': 'Yearly Trends (Unique Students)',
+                    'table': df_trend_pivot
+                })
+            except Exception as e:
+                pass
     else:
         kpi_result['Status'] = 'No attendance data found.'
         fig = None
